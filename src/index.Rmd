@@ -1,0 +1,40 @@
+---
+title: Posts
+output:
+  html_document:
+    theme: journal
+---
+
+```{r,echo=FALSE}
+
+f = list.files(pattern='\\.?md')
+f = f[f!='index.Rmd']
+
+get_date = function(filepath){
+	ln = grep('date:',readLines(filepath),value=TRUE)
+	dt = strsplit(ln, ': ')[[1]][2]
+	dt
+}
+
+get_title = function(filepath){
+	ln = grep('title:',readLines(filepath),value=TRUE)
+	dt = strsplit(ln, ': ')[[1]][2]
+	dt
+}
+
+dates = sapply(f,FUN=get_date)
+titles = sapply(f,FUN=get_title)
+
+filenames = sub('.Rmd','.html',f) 
+
+links = paste('[',titles,'](',filenames,')',sep='')
+
+tab = data.frame(Date=dates,Title=links,row.names=NULL)
+tab = tab[order(tab$Date,decreasing=T),]
+
+knitr::kable(tab,row.names=FALSE)
+
+```
+
+
+

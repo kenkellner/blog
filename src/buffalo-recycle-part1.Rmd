@@ -1,0 +1,327 @@
+---
+title: Comparing Recycling Rates Among Buffalo Neighborhoods (Part 1)
+date: 2018-05-13
+output:
+  html_document:
+    theme: journal
+    highlight: pygments
+    toc: true
+    toc_float: true
+---
+
+#Introduction
+
+I've long been a stubborn proponent of base `R` for processing and visualizing data.
+It remains an incredibly robust and flexible tool for these purposes.
+However, I've recently taken a deep dive into the [tidyverse](https://tidyverse.org) family of R packages, which perform the same types of tasks in an arguably more streamlined and clear fashion.
+
+My approach to learning the `tidyverse` and the related `ggplot2` visualization package has involved [several](http://r4ds.had.co.nz/) [excellent](https://csgillespie.github.io/efficientR/) [books](http://ggplot2.tidyverse.org/), but I always learn best by actually applying tools to questions I'm interested in.
+So, in addition to applications in my [current research](https://github.com/kenkellner), I've been looking for other available datasets to explore.
+
+The city of Buffalo, NY recently created a website called the [Buffalo OpenData](https://data.buffalony.gov/) for publishing data on city services. 
+As I'm from the Buffalo region, I decided this was a perfect source for datasets to work with.
+
+#Downloading the Data
+
+The Buffalo OpenData portal uses the Socrata Open Data API (SODA). Luckily, there is an R client for Socrata, `RSocrata`, available on CRAN.
+
+The `RSocrata` package has a variety of functions available, including one for identifying available datasets (`ls.socrata`) and one for downloading them directly into R (`read.socrata`). Here are a few of the available datasets on the Buffalo OpenData Portal:
+
+```{r}
+library(RSocrata)
+buf_datasets = ls.socrata('https://data.buffalony.gov')
+head(buf_datasets$title)
+```
+
+I'm going to explore the first dataset listed, which provides monthly recycling rates for different Buffalo neighborhoods. The dataset is available in several formats:
+
+```{r}
+buf_datasets$distribution[[1]]$mediaType
+```
+
+You can get the URL for the CSV dataset with `$downloadURL`:
+
+```{r}
+csv_url = buf_datasets$distribution[[1]]$downloadURL[1]
+csv_url
+```
+
+I'll pass the URL to `read.socrata`, then immediately pipe the resulting data frame into a `tibble`. For that (and later data manipulation) I'll also need the `tidyverse` R package.
+
+```{r,message=FALSE,warning=FALSE}
+library(tidyverse)
+rec_raw = read.socrata(csv_url) %>% as_tibble()
+rec_raw
+```
+
+Each row of the dataset represents a neighborhood's monthly recycling statistics.
+There are columns for neighborhood, date, total recycling, total garbage, and the recycling rate.
+
+Data are available for roughly the past year:
+
+```{r}
+min(rec_raw$DATE)
+max(rec_raw$DATE)
+```
+
+#Tidying the Dataset
+
+## Cleaning up Variables
+
+The first step in cleaning up this dataset is to rename the final three columns, which are a little long.
+
+```{r}
+names(rec_raw)[3:5] = c('RECYCLE','GARBAGE','RATE')
+```
+
+Two additional things jumped out at me to fix. 
+First the neighborhood names were inconsistently capitalized, which could becoming frustrating later on. 
+Second, the `RATE` column appeared to be rounded.
+To fix these issues I made everything in the `NEIGHBORHOOD` column uppercase, and calculated the recycling rate myself:
+
+```{r}
+rec = rec_raw %>%
+	mutate(NEIGHBORHOOD = str_to_upper(NEIGHBORHOOD)) %>%
+	mutate(RATE = RECYCLE / (RECYCLE + GARBAGE))
+```
+
+##Summarizing by Neighborhood
+
+Currently I have monthly recycling stats. For visualization, I decided to summarize information for each neighborhood across all available months.
+I also calculated an additional statistic that represented the proportional change in recycling rate for each neighborhood over the time period of the study:
+
+$$
+\textrm{Percent Change} = \frac{Rate_{end} - Rate_{start}}{Rate_{start}}
+$$
+
+The equivalent function in R:
+
+```{r}
+perc_change = function(val,date){
+	start = val[which.min(date)]
+	end = val[which.max(date)]
+	(end - start)/start
+}
+```
+
+The tools in the `tidyverse` make generating summary statistics for each neighborhood straightforward:
+
+```{r}
+rec = rec %>%
+	group_by(NEIGHBORHOOD) %>%
+	summarize(MnRecycle = mean(RECYCLE,na.rm=T),
+			  MnGarbage = mean(GARBAGE,na.rm=T),
+			  MnRate = mean(RATE,na.rm=T) * 100,
+			  Change = perc_change(RATE, DATE))
+
+rec
+```
+
+Now I have one row per neighborhood with summary statistics for each.
+
+#Visualizing the Data
+
+I used the `ggplot2` library for visualizations. Note that the `geom_sf` function I use later to plot spatial data is not available in the current CRAN version of `ggplot2`, so I installed the latest version from Github instead:
+
+```{r,eval=FALSE}
+devtools::install_github('tidyverse/ggplot2')
+```
+
+##Recycling Rate
+
+Here's a quick and dirty histogram, using `ggplot2`, showing the distribution of recycling rates by neighborhood.
+Most neighborhoods have a rate less than 20%.
+
+```{r,warning=FALSE,message=FALSE}
+library(ggplot2)
+rec %>% ggplot() +
+	labs(title = 'Distribution of recycling rates by neighborhood',
+		 x = 'Recycling Rate (%)') +
+	geom_histogram(aes(x=MnRate),bins=15) +
+	geom_vline(xintercept=mean(rec$MnRate),size=2,color='red') +
+	geom_text(aes(x=16.5,y=6,
+				  label=paste('Overall mean = ',round(mean(rec$MnRate),2),'%',sep='')))
+```
+
+##Change in Recycling Rate
+
+Instead looking at proportional change in recycling rate over the time period of the dataset:
+
+```{r,warning=FALSE,message=FALSE}
+rec %>% 
+	mutate(above0 = ifelse(Change > 0,'Increasing','Decreasing')) %>%
+	ggplot() +
+	labs(title = 'Change in neighborhood recycling rate, May 2017-April 2018',
+		 x = '% Change in Recycling Rate',
+		 fill = 'Trend') +
+	geom_histogram(aes(x=Change,fill=above0),breaks=seq(-0.15,0.35,0.05)) +
+	geom_vline(xintercept=0,size=2,color='white')
+```
+
+Most neighborhoods are showing an increasing trend. 
+
+## Seasonal Patterns
+
+Note that the percent change statistic ignores any seasonal patterns in recycling rate that may exist.
+Summarizing the raw data by month reveals that recycling rates may be slightly higher in the winter, but the trend is not strong. 
+
+```{r,warning=FALSE,message=FALSE}
+library(lubridate) #For handling dates
+rec_raw %>%
+	mutate(MONTH = factor(month(DATE)),
+		   SEASON = ifelse(MONTH%in%c(11,12,1,2), 'Winter','Other')) %>%
+	ggplot(aes(x=MONTH,y=RATE, fill=SEASON)) +
+		labs(title = 'Recycling rate by month',
+			 x = 'Month', y = 'Recycling rate') +
+		geom_boxplot()
+```
+
+Regardless, this dataset spans almost exactly one year (May 2017 - April 2018) so seasonal effects should be minimized.
+
+#Georeferencing the Neighborhoods
+
+## Finding Spatial Data
+
+To plot these data spatially (and to connect them to other spatially-referenced datasets), I needed information about the shape and location of each neighborhood.
+The [metadata](https://data.buffalony.gov/Quality-of-Life/Neighborhood-Curbside-Recycling-Rates/ug79-xatx) for this dataset refers to the neighborhood boundaries in the Buffalo ArcGIS database, but strangely this spatial information does not appear to be available on the OpenData portal.
+
+I was forced to turn to Google instead, and quickly found a database of neighborhood boundary shapefiles provided by [Zillow](https://www.zillow.com/howto/api/neighborhood-boundaries.htm). 
+The Zillow shapefiles are at the state level, so I downloaded the zipped-up file for New York and extracted it:
+
+```{r,warning=FALSE,message=FALSE}
+src_url = 'https://www.zillowstatic.com/static-neighborhood-boundaries/LATEST/static-neighborhood-boundaries/shp/ZillowNeighborhoods-NY.zip'
+if (!file.exists('../data/ZillowNeighborhoods-NY.zip')){
+	dir.create('../data')
+	download.file(src_url,'../data/ZillowNeighborhoods-NY.zip')
+}
+unzip('../data/ZillowNeighborhoods-NY.zip',exdir='../data/')
+```
+
+
+To read in the shapefile I used the `sf` package, which can handle multiple different spatial data formats and also supports piping in the `tidyverse` style.
+I selected only the neighborhoods in the city of Buffalo, and also converted the neighborhood names to be all uppercase (to match the recycling data).
+
+```{r,warning=FALSE, message=FALSE}
+library(sf)
+nb = st_read('../data/ZillowNeighborhoods-NY.shp',quiet=T) %>%
+	filter(City == 'Buffalo') %>%
+	mutate(NEIGHBORHOOD = str_to_upper(Name)) %>%
+	select(NEIGHBORHOOD)
+```
+
+## Joining the Datasets
+
+The next step was to join the recycling data to the neighborhood spatial data by matching `NEIGHBORHOOD` names. 
+I expected that there would be some mismatches to fix. 
+I checked which neighborhoods in the spatial dataset didn't have recycling data:
+
+```{r}
+nb %>% full_join(rec,by='NEIGHBORHOOD') %>% filter(is.na(MnRecycle)) %>% as_tibble()
+```
+
+and which neighborhoods in recycling dataset didn't have spatial data:
+
+```{r}
+nb %>% full_join(rec,by='NEIGHBORHOOD') %>% filter(is.na(st_dimension(.))) %>% as_tibble()
+```
+
+There are a few obvious issues of inconsistent naming which I fixed before doing a final join of the recycling and spatial datasets.
+
+```{r}
+nb = nb %>%
+	mutate(NEIGHBORHOOD = recode(NEIGHBORHOOD,
+				`MLK PARK` = 'M.L.K. PARK',
+				`DELAWARE-WEST FERRY` = 'DELAWARE W. FERRY',
+				`BROADWAY-FILLMORE` = 'BROADWAY FILLMORE'))
+
+spatial_rec = nb %>%	
+	left_join(rec,by='NEIGHBORHOOD')
+```
+
+#Building Maps
+
+Now that the neighborhoods are georeferenced, I can visualize them in space using `ggplot2`.The first step is to calculate centroids for each neighborhood and extract their coordinates.
+I need these coordinates later so I can label individual neighborhoods.
+
+```{r,warning=FALSE, message=FALSE}
+nb_centers = spatial_rec %>%
+	st_centroid() %>%
+	mutate(X = st_coordinates(.)[,1],
+		   Y = st_coordinates(.)[,2])
+```
+
+## Recycling Rate
+
+I used `ggplot` with `geom_sf` to plot the neighborhood polygons and color them according to recycling rate. 
+I also added labels to the three highest and three lowest neighborhoods by rate with `geom_label`, using the coordinates I extracted above.
+
+```{r,fig.height=6}
+spatial_rec %>%
+	ggplot() +
+	geom_sf(aes(fill=MnRate)) +
+	scale_fill_gradient(low='red',high='green') +
+	labs(title = 'Recycling rate in Buffalo neighborhoods',
+		 fill = '% Waste \n Recycled',
+		 x=NULL, y=NULL) +	
+	theme(axis.text.x = element_blank(),
+		  axis.ticks.x = element_blank(),
+		  axis.text.y = element_blank(),
+		  axis.ticks.y = element_blank()) +
+	geom_label(data=nb_centers %>% top_n(3,MnRate),
+			   mapping=aes(X,Y,label=NEIGHBORHOOD),
+			   color='darkgreen',alpha=0.7) +
+	geom_label(data=nb_centers %>% top_n(-3,MnRate),
+			   mapping=aes(X,Y,label=NEIGHBORHOOD),
+			   color='red',alpha=0.7)
+
+```
+
+Lower recycling rates are concentrated in the center of the city, while neighborhoods in the northern part of the city have higher rates.
+
+## Change in Recycling Rate
+
+Buffalo has recently made [a push to improve recycling rates](https://buffalorecycles.org/), so it would also be interesting to see which neighborhoods have shown the greatest improvement in recycling rate over the last year.
+
+I created a nearly identical figure using the percent change in rate statistic I calculated earlier:
+
+```{r,fig.height=6}
+spatial_rec %>%
+	ggplot() +
+	geom_sf(aes(fill=Change)) +
+	scale_fill_gradient(low='red',high='green') +
+	labs(title = 'Change in recycling rate in Buffalo neighborhoods',
+		 fill = '% Change \n in Rate',
+		 x=NULL, y=NULL) +	
+	theme(axis.text.x = element_blank(),
+		  axis.ticks.x = element_blank(),
+		  axis.text.y = element_blank(),
+		  axis.ticks.y = element_blank()) +
+	geom_label(data=nb_centers %>% top_n(3,Change),
+			   mapping=aes(X,Y,label=NEIGHBORHOOD),
+			   color='darkgreen',alpha=0.7) +
+	geom_label(data=nb_centers %>% top_n(-3,Change),
+			   mapping=aes(X,Y,label=NEIGHBORHOOD),
+			   color='red',alpha=0.7)
+
+```
+
+There's less spatial aggregation in percent change. 
+However there seems to be a general trend in which neighborhoods with the greatest increase in recycling rate were among those that had lower overall recycling rates. 
+This makes sense as these neighborhoods probably had the most room for quick improvements.
+
+However, a cursory analysis reveals that this trend is weak at best:
+
+```{r,warning=FALSE,message=FALSE}
+spatial_rec %>%
+	ggplot(aes(x=MnRate,y=Change)) +
+	labs(title= 'Mean recycling rate and % change in recycling have a weak relationship',
+		   x='Mean Recycling Rate',
+		   y='% Change in Recycling Rate') +
+	geom_point() +
+	geom_smooth(method=lm)
+```
+
+#Next Steps
+
+So far I haven't done much with this dataset other than look at surface patterns.
+Now that I have the recycling data georeferenced, I plan to model recycling rate as a function of other variables that are spatially referenced - for example, U.S. Census block data.
