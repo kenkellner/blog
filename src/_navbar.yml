@@ -5,3 +5,5 @@ left:
     href: https://kenkellner.com/blog
   - text: "RSS"
     href: https://kenkellner.com/blog/feed.xml
+  - text: "Source"
+    href: https://github.com/kenkellner/blog
