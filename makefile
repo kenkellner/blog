@@ -7,7 +7,7 @@ RMD_OUT := $(patsubst $(SRC)/%.Rmd,$(BUILD)/%.html,$(RMD_IN))
 all: $(RMD_OUT)
 	@mkdir -p build
 	@echo "Building index"
-	@Rscript build_RMD.R $(SRC)/index.Rmd $(BUILD)/index.html > /dev/null 2>&1 
+	@Rscript build_Rmd.R $(SRC)/index.Rmd $(BUILD)/index.html > /dev/null 2>&1 
 	@echo "Building RSS"
 	@python3 build_rss.py
 	@echo "Done"
@@ -17,7 +17,7 @@ deploy:
 		kllnr.net:/var/www/kenkellner.com/blog/
 
 $(BUILD)/%.html: $(SRC)/%.Rmd $(SRC)/_navbar.yml 
-	Rscript build_RMD.R $< $@
+	Rscript build_Rmd.R $< $@
 
 clean:
 	rm -f build/*
