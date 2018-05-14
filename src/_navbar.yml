@@ -3,3 +3,5 @@ left:
     href: https://kenkellner.com
   - text: "Posts"
     href: https://kenkellner.com/blog
+  - text: "RSS"
+    href: https://kenkellner.com/blog/feed.xml

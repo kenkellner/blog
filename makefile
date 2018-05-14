@@ -8,6 +8,8 @@ all: $(RMD_OUT)
 	@mkdir -p build
 	@echo "Building index"
 	@Rscript build_RMD.R $(SRC)/index.Rmd $(BUILD)/index.html > /dev/null 2>&1 
+	@echo "Building RSS"
+	@python3 build_rss.py
 	@echo "Done"
 
 deploy:

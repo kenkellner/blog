@@ -36,13 +36,14 @@ head(buf_datasets$title)
 I'm going to explore the first dataset listed, which provides monthly recycling rates for different Buffalo neighborhoods. The dataset is available in several formats:
 
 ```{r}
-buf_datasets$distribution[[1]]$mediaType
+ind = which(buf_datasets$title == 'Neighborhood Curbside Recycling Rates')
+buf_datasets$distribution[[ind]]$mediaType
 ```
 
 You can get the URL for the CSV dataset with `$downloadURL`:
 
 ```{r}
-csv_url = buf_datasets$distribution[[1]]$downloadURL[1]
+csv_url = buf_datasets$distribution[[ind]]$downloadURL[1]
 csv_url
 ```
 
