@@ -10,7 +10,8 @@ leader='https://kenkellner.com/blog/'
 
 links = os.listdir('build')
 links.remove('index.html')
-links.remove('feed.xml')
+if 'feed.xml' in links:
+    links.remove('feed.xml')
 
 src = []
 for i in links:
@@ -26,7 +27,10 @@ titles = []
 for i in src: 
     for line in open(i):
         if 'title: ' in line:
-            titles.append(line.split(': ')[1].strip('\n'))
+            title_raw = line.split(': ',1)[1].strip('\n')
+            title_raw = re.sub(r"^'","",title_raw)
+            title_raw = re.sub(r"'$","",title_raw)
+            titles.append(title_raw)
 
 dates, links, titles = zip(*sorted(zip(dates, links, titles)))
 

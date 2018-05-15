@@ -4,9 +4,8 @@ date: 2018-05-13
 output:
   html_document:
     theme: journal
+    css: style.css
     highlight: pygments
-    toc: true
-    toc_float: true
 ---
 
 #Introduction

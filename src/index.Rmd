@@ -3,9 +3,11 @@ title: Posts
 output:
   html_document:
     theme: journal
+    css: style.css
 ---
 
 ```{r,echo=FALSE}
+library(stringr)
 
 f = list.files(pattern='\\.?md')
 f = f[f!='index.Rmd']
@@ -18,8 +20,10 @@ get_date = function(filepath){
 
 get_title = function(filepath){
 	ln = grep('title:',readLines(filepath),value=TRUE)
-	dt = strsplit(ln, ': ')[[1]][2]
-	dt
+	t = str_split(ln, ': ', 2)[[1]][2]
+	t = gsub("^'","",t)
+	t = gsub("'$","",t)
+	t
 }
 
 dates = sapply(f,FUN=get_date)

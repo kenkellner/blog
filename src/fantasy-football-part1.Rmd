@@ -1,0 +1,225 @@
+---
+title: 'Fantasy Football: Science or Luck? (Part 1)'
+date: 2013-04-02
+output:
+  html_document:
+    theme: journal
+    css: style.css
+    highlight: pygments
+---
+
+# Introduction
+
+I've always been an (American) football statistics junkie. 
+As a child I collected and carefully studied thousands of football cards - I always had the most important datapoints memorized.
+Every Monday morning on the school bus, September to January, I pored over the box scores from the previous NFL Sunday to see which teams and players had succeeded or failed.
+
+Fantasy football was a logical continuation of this interest.
+In case some readers are unfamiliar with the game, I will provide a brief explanation. 
+A group of 8-12 friends, family, or random people on the internet form a league before the start of the NFL season. 
+Using one of a [variety of draft formats](http://www.nfl.com/fantasyfootball/help/drafttypes), each participant selects a team of players to represent them. Teams go head to head each week of the season. 
+The performance of the players on each team (in the real-life NFL) is scored based on a standard system; for example, a touchdown is typically worth 6 points and 10 yards rushing is worth a single point. 
+Points are totaled and the team with the higher total score wins the week. 
+Typically there is a playoff system and a final fantasy 'Super Bowl'. You can read more about fantasy football [here](https://en.wikipedia.org/wiki/Fantasy_football_%28American%29) if you are interested.
+
+After many years of experience, my anecdotal observations indicate fantasy football success is more a roll of the dice rather than an exact science.
+In each individual year or league, the draft order, total points scored, and even final regular season rank seems to have little bearing on the overall winner. 
+Seldom do the same players win the championship or even make the playoffs in consecutive years (a far cry from the actual NFL, where 9 of the past 13 Super Bowls have been won by a set of only 4 teams). 
+Still, these observations are exactly as I described them (anecdotal). Given enough data, interesting patterns may yet lurk underneath.
+
+Luckily for my curiosity, there is some data available to test for these patterns. 
+Over several late nights, I dug through the archives of the fantasy football leagues I participated in going back to 2006.
+Unfortunately, CBS Sportsline (where I played prior to 2006) did not keep any records, though I checked thoroughly after dusting off my late 1990s era AOL username and password. 
+My analysis of this dataset will be broken into several parts, as I have time to complete them. 
+The complete raw dataset is available [here](https://kenkellner.com/files/fantasy_football_results.csv).
+
+```{r}
+src_url = 'https://kenkellner.com/files/fantasy_football_results.csv'
+if (!file.exists('../data/fantasy_football_results.csv')){
+	dir.create('../data')
+	download.file(src_url,'../data/fantasy_football_results.csv')
+}
+
+rawdata = read.csv('../data/fantasy_football_results.csv',header=T)
+```
+
+# Variation in Player Success
+
+The two most important questions I'm interested in are (1) which fantasy players  are successful, and (2) what behaviors or patterns make them successful? 
+In order to begin to answer those questions, I needed to answer an even more fundamental question - how should we define individual fantasy football success?
+
+# Win Percentage
+
+The most straightforward method of defining fantasy 'success' is to examine the player's regular season record.
+However, since the number of competing players and the number of games played can vary between years and leagues, it makes more sense to use a simple win percentage (e.g., .500) for each player in each year.
+Below is a histogram displaying the mean win percentage (averaged across all years/leagues for which I have data) for the 20 players I have at least 3 years of data for. 
+Taller bars mean more players fell in that range of win percentage:
+
+```{r,message=FALSE,warning=FALSE}
+#Re-create missing graphdata-----------------------------------
+library(tidyverse)
+
+players_keep = rawdata %>%
+	group_by(Player) %>%
+	summarize(n = n()) %>%
+	filter(n>2) %>%
+	pull(Player)
+
+rawdata_keep = rawdata %>% filter(Player%in%players_keep)
+
+leaguestats = rawdata_keep %>%
+	group_by(League) %>%
+	summarize(MnPts = mean(Total.Points,na.rm=T),
+			  SdPts = sd(Total.Points,na.rm=T))
+
+graphdata = rawdata_keep %>%
+	left_join(leaguestats,by='League') %>%
+	mutate(PtsZ = (Total.Points - MnPts) / SdPts) %>%
+	group_by(Player) %>%
+	summarize(TotPtsZ = mean(PtsZ, na.rm=T),
+			  WinPct = mean(Win.pct..reg.),
+			  PlayoffPct = mean(Playoffs),
+			  ChampPct = mean(Champion))
+#--------------------------------------------------------------
+
+hist(graphdata$WinPct, prob=TRUE,main='Mean player win %',
+	 xlab='Win Percentage',col=rgb(220,57,18,max=255))    
+
+#Draw smoothed density line
+lines(density(graphdata$WinPct,adjust=1.8),lwd=3,col="black") 
+
+#Add identification info
+text(0.6,7,"1. Mark S. (.625)")
+text(0.6,6.5,"2. Ken (.600)")
+text(0.6,6,"3. Tom S. (.550)")
+text(0.6,5.5,"4. Tom G. (.540)")
+text(0.6,5,"5. Steve (.530)")
+```
+
+I've gathered a reasonable amount of data, so you can see the ever-present [normal distribution](https://en.wikipedia.org/wiki/Normal_distribution), or bell curve, beginning to take shape. 
+However, it's [skewed](https://en.wikipedia.org/wiki/Skewness) - there is a higher concentration of players below .500 and a small number (2) well above .500.
+It seems most people fall right around the expected average (as many games won as lost) or just above - but it's much more unlikely to have a mean win percentage above 0.550. 
+I'm not surprised by the positions of my fellow players on this graph - my longtime opponents Steve and Tom G. are above .500, and Mark S. has set the curve. 
+Still, it's clear that none of us have dominated our fantasy leagues the way some top NFL teams have over the same time period (11 teams have a win percentage greater than .550 over the last 6 years, led by New England with 0.760). 
+The parity I see in the graph above is preliminary evidence that fantasy football success seems to be more about luck than skill. 
+Of course, regular season win percentage doesn't fully measure fantasy football success - ultimately we are interested in who wins the league outright.
+
+# Proportions of Seasons Ending in Championship
+
+The second statistic I used to measure 'success' is the proportion of leagues in which a player won a championship (calculated simply as number of championships won divided by total leagues played). 
+This method might improve on the previous metric by ignoring all the variation inherent within the regular season and focusing only on the winner. 
+However, it has issues of its own which are immediately apparent in the histogram below:
+
+```{r}
+hist(graphdata$ChampPct, breaks=5,prob=TRUE,main='How often do players win the title?',xlab='% of League Championships',col=rgb(255,153,0,max=255)) 
+
+#Draw smoothed density line
+lines(density(graphdata$ChampPct,adjust=0.9),lwd=3,col="black")
+
+#Add identification info
+text(0.25,8,"1. Colin (.333)")
+text(0.25,7,"2. Terry (.250)")
+text(0.25,6,"2. Stef (.250)")
+text(0.25,5,"4. Tom G. (.200)")
+text(0.25,4,"5. 2-way tie (.167)")
+```
+
+This distribution is nearly uniform, with the exception of a spike at 0 (perhaps best modeled as [zero-inflated](https://en.wikipedia.org/wiki/Zero-inflated_model)?).
+Most players don't win more than the 10% of leagues they'd be expected to win by chance (in an average 10-team league). 
+A single championship greatly changes your position in the ranking - no player in the dataset won more than 2 total championships regardless of how many leagues they were in (Colin, Tom G., and Ken each had 2). 
+I'd argue that this method of defining success relies too much on chance (I'll explain this further later on), though Colin's 2 championships in 6 leagues is impressive.
+
+# Proportion of Seasons in Playoffs
+
+The third metric I used to define success is the percentage of seasons in which a given player made into the 4-team playoffs. 
+This method accounts for regular season success, and is less dependent on the random outcome of a single championship game.
+It also standardizes between leagues with differences in variation among win percentages (e.g. between a league where almost everyone has a record near .500 and a league where a couple teams are near 0 and a couple near 1). 
+Here's the resulting distribution:
+
+```{r}
+#Recreate missing playoffpct chart-----------------
+hist(graphdata$PlayoffPct, breaks=5,prob=TRUE,main='How often to players reach the playoffs?',xlab='% of Leagues in Playoffs',col=rgb(16,150,24,max=255)) 
+
+#Draw smoothed density line
+lines(density(graphdata$PlayoffPct,adjust=0.9),lwd=3,col="black")
+
+#Add identification info
+text(0.8,1.6,"1. Mark S. (.833)")
+text(0.8,1.4,"2. Stef (.750)")
+text(0.8,1.2,"3. Colin (.667)")
+text(0.8,1,"4. Ken. (.563)")
+text(0.8,0.8,"5. 4-way tie (.500)")
+```
+
+If playoff entry was completely random, you would expect most people to have a percentage between 0.33 and 0.5 depending on the number of teams in the league. 
+The distribution has a mode in that area (around 0.45), but it also appears to be bimodal. 
+There are a large number of players who never or almost never make the playoffs, and a skew towards a small number of players who nearly always make it. 
+Once again, Mark S. is at the top, suggesting a link between mean regular season record and playoff entry (not at all surprising).
+
+# Playoff Seeding
+
+What I haven't accounted for above is playoff seeding (#1-4). You'd expect that higher seeds, earned with better regular season records, would set you up for a championship. At the very least, you'd expect an equal number of wins from each seed. Here's the breakdown, by percent of championships won:
+
+```{r}
+#Recreate missing chart 2 code-------------------------
+
+chart2 = rawdata %>%
+	filter(Rank.b.f.Playoffs < 5) %>%
+	group_by(Rank.b.f.Playoffs) %>%
+	summarize(ChampPct = mean(Champion))
+
+barplot(chart2$ChampPct, main = 'Which Playoff Seed Does Best?',
+		xlab = 'Playoff Seed (1=top)', ylab='Proportion of Championships',
+		names = 1:4, col=c(rgb(51,102,204,max=255),rgb(220,57,18,max=255),
+						   rgb(255,153,0,max=255),rgb(16,150,24,max=255)))
+```
+
+This is very surprising - the first seed is actually the *least likely* to win the championship!
+Of the 16 leagues I examined, only 1 top seed won the title. 
+Second seeds and fourth seeds are much more likely to win than either first or third seeds. 
+Granted, I haven't tested for actual statistical differences between the seeds but this is still puzzling.
+One suspicion that I have is that lower seeds (particularly 4th seeds) are often teams that are peaking at the end of the season, just managing to sneak into the playoffs. 
+In the playoff rounds, they defeat top seeded teams which may have peaked earlier in the season and declined since. 
+I have collected data on win streaks and other variables which may allow me to explore this question further.
+The takeaway message is that effort, and perhaps skill, play a role in getting a player to the playoffs, but after that it seems to be based mainly on chance.
+
+
+# Total Points Scored
+
+The fourth and final metric I used is fairly straightforward in theory - total points scored. 
+Points scored has the advantage of being the least based on those random, frustrating weeks when you lose 150-145, since points are totaled across all regular season weeks. 
+Of course, total points might be completely unrelated to actual wins and championships for that same reason. 
+The raw points data requires some adjustment, since every league has different roster and scoring rules. 
+Therefore, for each player in each league, I calculated a standardized [Z-score](https://en.wikipedia.org/wiki/Standard_score) which essentially compares that player's points total with the other points totals in that particular league. 
+The result is numbers generally between -3 and 3, where a completely average point total is equal to 0 and a point total 1 standard deviation above the mean is equal to 1 (and so on).
+Comparison between years and leagues is now possible.
+
+```{r}
+hist(graphdata$TotPtsZ, breaks=5,prob=TRUE,main='Total Points Scored',xlab='Z-score of Total Points',col=rgb(51,102,204,max=255))   
+
+#Draw smoothed density line
+lines(density(graphdata$TotPtsZ,adjust=2),lwd=3,col="black")
+
+#Add identification information
+text(1,.8,"1. Mark S. (1.148)")
+text(1,.7,"2. Colin (0.520)")
+text(1,.6,"3. Tom S. (0.388)")
+text(1,.5,"4. Tom G. (.302)")
+text(1,.4,"5. Ken (.280)")
+```
+
+Mean Z-score follows a normal distribution much more closely than the previous 2 methods.
+Most players have a mean Z-score around 0, indicating an average number of points scored.
+Familiar names make up the top-5 ranking, with Mark S. again at the top, more than 1 standard deviation greater than the mean.
+
+# Conclusions from Part I
+
+Clearly, defining fantasy football success is difficult. 
+All of these methods have drawbacks, and I've done little to answer the question of luck vs. skill. 
+However, there are a few players that seem to rise to the top under every metric - based on these charts alone, I'd give the overall title to Mark. 
+A lot more work needs to be done - in my next post, I'll be moving away from looking at individual players in order to answer predictive questions. 
+For example, does draft order affect championship chance? 
+What about player effort (=number of moves)? 
+Pooling all players together will allow me to use more sophisticated modeling approaches to answer these questions.
+
+I'd love to hear any reader ideas or criticism on this analysis so far. I'd also greatly appreciate the contribution of data from additional leagues.
