@@ -22,6 +22,7 @@ for i in src:
     for line in open(i):
         if 'date: ' in line:
             dates.append(line.split(': ')[1].strip('\n'))
+            break
 
 titles = []
 for i in src: 
@@ -31,6 +32,7 @@ for i in src:
             title_raw = re.sub(r"^'","",title_raw)
             title_raw = re.sub(r"'$","",title_raw)
             titles.append(title_raw)
+            break
 
 dates, links, titles = zip(*sorted(zip(dates, links, titles)))
 

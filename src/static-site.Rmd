@@ -1,0 +1,284 @@
+---
+title: Simple Static Site Generator with R, Python, and GNU Make
+date: 2018-05-15
+output:
+  html_document:
+    theme: journal
+    css: style.css
+    highlight: pygments
+---
+
+# Motivation
+
+I'm hoping to do more blogging in the future, and needed a place to post things.
+Over the years I've used a few different blogging platforms, including LiveJournal, Blogger, and most recently, [Jekyll](https://jekyllrb.com/).
+I really enjoyed the Jekyll approach of writing plain text and compiling it to a series of fixed (i.e., static) html pages.
+There are a number of these so-called static-site generators out there.
+Since I mainly work with `R`, [blogdown](https://github.com/rstudio/blogdown) is a good choice and no doubt would have worked just fine.
+However, I decided I wanted to attempt to build a basic framework myself.
+
+# Features to Include
+
+1. Version control.
+
+2. Write posts in plain text, ideally with good support for inline code, and then generate decent-looking HTML.
+
+3. An organized, efficient approach to the generation process: keep track of page dependencies and re-build a page to HTML only when a dependency has changed.
+
+5. Auto-generation of an index/table of contents page.
+
+5. Auto-generation of an RSS feed.
+   
+# Version Control
+
+The whole site is in a `git` repository (you can see it [here](https://github.com/kenkellner/blog)).
+Only plain text files are tracked - generated files like HTML, XML are not.
+The site is organized into two primary folders: folder `src` contains raw text input files, and folder `build` contains the corresponding output HTML files that make up the actual viewable website.
+
+# Writing Posts
+
+For me (an `R` user), [R markdown](https://rmarkdown.rstudio.com/) was the obvious choice for converting plain text to HTML.
+Using a simple syntax you can mix text and nicely-formatted code blocks, run `R` code in the background, and generate visualizations that appear in the HTML file.
+It's an amazing tool for creating reproducible analyses.
+You are also able to run Python code in `Rmarkdown` using the `reticulate` package (something I hope to do more of the future).
+
+I made a simple R script `build_Rmd.R` to convert `Rmd` files to `html` with the `rmarkdown` package:
+
+```{r,eval=FALSE}
+args = commandArgs(trailingOnly = TRUE)
+rmarkdown::render(args[1],output_file=paste('../',args[2],sep=''))
+```
+
+The `commandArgs` function allows this script to take information from command line standard input (in this case the input and output file names).
+This will be needed later.
+
+I kept all the detailed `Rmarkdown` options in the yaml header of each `Rmd` file, which looks basically like this:
+
+```{r,eval=FALSE}
+title: A title
+date: 2018-01-01
+output:
+  html_document:
+    theme: journal
+    css: style.css
+    highlight: pygments
+```
+
+The header allows me to specify a basic HTML theme (`journal`) which I modified with a custom CSS stylesheet (`style.css`).
+The `src` directory also contains a file `_navbar.yml`, which contains links that are put into a simple navigation bar inserted at the top of each page when I compile it with `Rmarkdown`.
+
+# Building the Site
+
+I wanted to explicitly organize the dependency structure of my site. 
+For example, building `example-post.html` depends on `example-post.Rmd`, `_navbar.yml` and `style.css`.
+Also, Rmarkdown can sometimes take a little while to compile `Rmd` to `html` especially if the document is complicated.
+Thus, I wanted to avoid constantly re-compiling all pages and only re-compile a page when its dependencies have changed.
+
+This is a common problem in programming, and a time-tested solution is [GNU Make](https://www.gnu.org/software/make/).
+`Make` uses a kind of recipe, a `makefile`, to construct output files from a set of dependencies based on rules you define.
+If the dependencies of a particular output file change (e.g., you edit one) and you run `make` again, the output will be re-created.
+On the other hand, if the dependencies are unchanged and the output already exists, `make` won't waste time generating it again.
+
+In the first part of the `makefile` for my static site, I set up variables `$SRC` and `$BUILD` corresponding to folders containing text files (`src`) and output html (`build`) respectively.
+
+```{sh, eval=FALSE}
+SRC=src
+BUILD=build
+```
+
+Next the makefile makes a list of the names of all `Rmd` files in the `src` directory, saving it into variable `$RMD_IN`. 
+By changing the file extension on each of these `Rmd` files to `html`, and changing their directory from `src` to `build`, the makefile now also has a corresponding list of all the output HTML files it needs to generate, saved in `$RMD_OUT`.
+
+```{sh, eval=FALSE}
+RMD_IN = $(wildcard $(SRC)/*.Rmd)
+RMD_OUT := $(patsubst $(SRC)/%.Rmd,$(BUILD)/%.html,$(RMD_IN))
+```
+
+Next I set up a recipe in the `makefile` to tell `make` how to generate a given `html` file (represented with the wildcard notation `%`) from its corresponding dependencies - the matching `Rmd` file, the navbar file, and the CSS file:
+
+```{sh,eval=FALSE}
+$(BUILD)/%.html: $(SRC)/%.Rmd $(SRC)/_navbar.yml $(SRC)/style.css 
+	Rscript build_Rmd.R $< $@
+```
+
+If either (1) the desired HTML file doesn't exist; or (2) one of the dependencies (specified after the colon `:`) have changed since `make` was last run, then `make` will execute the second line, which runs the `R` script I described earlier for running `Rmarkdown`. 
+Otherwise, nothing will happen - the HTML file is already exists and is up-to-date.
+No need to build it again!
+
+The code above generates a *given* HTML file. 
+I want to build all the HTML files in `$RMD_OUT` when I run `make`, or at least all the HTML files don't exist yet or have updated dependencies.
+For that I added another rule called `all`:
+
+```{sh,eval=FALSE}
+all: $(RMD_OUT)
+	@echo "Done"
+```
+
+This is called a "phony" `make` rule because it doesn't explicitly generate a new file (i.e., there's no file on the left-hand side of the colon).
+However the rule does have dependencies - the list of all required output HTML files (`$RMD_OUT`).
+Thus, running `make all` will force all HTML files to be generated or updated (if necessary) according to the rule above.
+
+# Generating an Index Page
+
+I needed a simple landing page for the blog (`index.html`; see it [here](https://kenkellner.com/blog)) that would list all the posts I've written so far.
+I wanted this page to contain two pieces of information: the title of each post (with a link to the page), and the date it was posted, in descending order.
+To keep things simple and consistent, I decided to use `R` and `Rmarkdown` for this task as well.
+
+The basic steps are as follows:
+
+1. Search the `src` directory for all `Rmd` files:
+
+    ```{r, eval=FALSE}
+    f = list.files(pattern='\\.?md')
+    f = f[f!='index.Rmd'] #Exclude this file
+    ```
+
+2. Extract the post date and title from each file:
+
+    ```{r,eval=FALSE}
+    library(stringr)
+    
+    get_date = function(filepath){
+    	ln = grep('date:',readLines(filepath),value=TRUE)
+    	dt = strsplit(ln, ': ')[[1]][2]
+    	dt
+    }
+    
+    get_title = function(filepath){
+    	ln = grep('title:',readLines(filepath),value=TRUE)
+    	t = str_split(ln, ': ', 2)[[1]][2]
+    	t = gsub("^'","",t)
+    	t = gsub("'$","",t)
+    	t
+    }
+
+    dates = sapply(f,FUN=get_date)
+    titles = sapply(f,FUN=get_title)
+    ```
+
+3. Generate links to the HTML pages in markdown format:
+
+    ```{r,eval=FALSE}
+    filenames = sub('.Rmd','.html',f) 
+    links = paste('[',titles,'](',filenames,')',sep='')
+    ```
+
+4. Format and print the dates and linked titles in a neat HTML table:
+
+    ```{r, eval=FALSE}
+    tab = data.frame(Date=dates,Title=links,row.names=NULL)
+    tab = tab[order(tab$Date,decreasing=T),]
+    knitr::kable(tab,row.names=FALSE)
+    ```
+
+I decided it would be easiest to generate the index file every time I built the site, regardless if there were any new posts to add. 
+Therefore, I added a rule to build it to the `all` recipe in the `makefile`:
+
+```{sh,eval=FALSE}
+all: $(RMD_OUT)
+	@Rscript build_Rmd.R $(SRC)/index.Rmd $(BUILD)/index.html
+	@echo "Done"
+```
+
+The index page is built in the same way (using `build_Rmd.R`) the actual blog posts are, and thus has the same navigation bar, styling, etc.
+
+# Generating an RSS feed
+
+I first thought I'd try to create an RSS feed for my blog in `R`, for consistency. 
+However, though I found several packages to *read* RSS files, I couldn't find one to *create* an RSS file.
+
+My next choice was a Python module called [python-feedgen](https://github.com/lkiesow/python-feedgen), which I've used in the past. Much like with building the `index.html` page, the approach here was to gather dates, titles, and links for each post and feed them into the module.
+I added a second script, `build_rss.py`, to do this, containing the steps below.
+
+1. Load required modules:
+
+    ```{python, eval=FALSE}
+    from feedgen.feed import FeedGenerator
+    import os
+    from datetime import datetime
+    ```
+
+2. Find all current posts (i.e., all HTML files in the build directory excluding the index):
+
+    ```{python, eval=FALSE}
+    links = os.listdir('build')
+    links.remove('index.html')
+    ```
+
+3. Create sorted lists of dates, links, and titles for each post. Dates and titles are extracted from the `Rmd` source file.
+
+    ```{python, eval=FALSE}
+    src = []
+    for i in links:
+        src.append('src/'+i.replace('.html','.Rmd'))
+    
+    dates = []
+    for i in src:
+        for line in open(i):
+            if 'date: ' in line:
+                dates.append(line.split(': ')[1].strip('\n'))
+    
+    titles = []
+    for i in src: 
+        for line in open(i):
+            if 'title: ' in line:
+                titles.append(line.split(': ',1)[1].strip('\n'))
+    
+    dates, links, titles = zip(*sorted(zip(dates, links, titles)))
+    ```
+
+4. Initialize the RSS feed object (class `FeedGenerator`) and add metadata:
+
+    ```{python, eval=FALSE}
+    fg = FeedGenerator()
+    fg.id(leader)
+    fg.link(href=leader+'feed.xml', rel='self')
+    fg.title('Ken Kellner\'s Blog')
+    fg.subtitle(' ')
+    fg.language('en')
+    ```
+
+5. For each post, add an RSS entry to the object using the dates, links, and titles obtained above:
+
+    ```{python, eval=FALSE}
+    leader='https://kenkellner.com/blog/' 
+
+    for i in range(len(dates)):
+        fe = fg.add_entry()
+        fe.title(titles[i])
+        fe.id(leader+links[i])
+        fe.link(href=leader+links[i])
+        fe.author({'name': 'Ken Kellner', 'email': 'contact@kenkellner.com'})
+        fe.description('')
+        date_raw = dates[i]+' -0500'
+        fe.published(datetime.strptime(date_raw, '%Y-%m-%d %z'))
+    ```
+
+6. Output the RSS feed as an XML file (`feed.xml`):
+
+    ```{python, eval=FALSE}
+    fg.rss_file('build/feed.xml')
+    ```
+
+I added another rule to the `makefile` to generate the RSS feed each time I built the site:
+
+```{sh, eval=FALSE}
+all: $(RMD_OUT)
+	@Rscript build_Rmd.R $(SRC)/index.Rmd $(BUILD)/index.html > /dev/null 2>&1 
+	@python3 build_rss.py
+	@echo "Done"
+```
+
+# Deploying the Site
+
+I host my websites on a Digital Ocean droplet to which I have full filesystem access.
+The fastest way to deploy the site is to simply `rsync` the entire local `build` directory to the `blog` directory of the site on the droplet.
+I added another "phony" recipe to the `makefile` to do this:
+
+```{sh, eval=FALSE}
+deploy:
+	@rsync -r --progress --delete --update build/ \
+		kllnr.net:/var/www/kenkellner.com/blog/
+```
+
+So, each time I complete I post I run `make all` and then `make deploy`, and my blog is up-to-date!
