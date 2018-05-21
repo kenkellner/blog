@@ -1,0 +1,230 @@
+---
+title: 'Recycling in Buffalo Part 2: Effects of Income and Education'
+date: 2018-05-21
+output:
+  html_document:
+    theme: journal
+    css: style.css
+    highlight: pygments
+---
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+#Data from last post
+tempR <- tempfile(fileext = ".R")
+library(knitr)
+purl("buffalo-recycle-part1.Rmd", output=tempR)
+source(tempR)
+unlink(tempR)
+```
+
+# Introduction
+
+In [part 1](https://kenkellner.com/blog/buffalo-recycle-part1.html) of my analysis of the [Buffalo recycling data]() in `R`, I downloaded the raw dataset, looked at some general patterns, and added geospatial information. 
+With this dataset in hand, my next step was to identify variables might be good predictors of a neighborhood's recycling rate.
+
+I was primarily interested in how two variables might affect neighborhood recycling rate:
+
+1. Income, and
+2. Education level
+
+Unfortunately, neither the recycling data itself nor the neighborhood boundary dataset contain any socioeconomic information about the neighborhoods, so I needed to introduce another dataset. This type of information was not readily available on the Buffalo OpenData portal. Thus, I explored an alternative data source: the U.S. Census Bureau.
+
+# Census Bureau Data
+
+Anyone can download Census data freely from the [website]().
+However, this is a rather slow and clunky method.
+Instead I obtained a key for API access to the Census data from [here](), and used the `tidycensus` package in R to download census data of interest.
+
+```{r,message=FALSE,warning=FALSE}
+library(tidycensus)
+```
+
+After obtaining the key you can save it into your `.Renviron` file for later use:
+
+```{r,eval=FALSE}
+census_api_key('YOUR KEY HERE', install=TRUE)
+```
+
+The package gives you access to two major sources of data collected by the U.S. Census Bureau: the Decennial Census, and the American Community Survey (ACS). 
+The Decennial Census data provides reliable information at a very fine scale, but has two primary disadvantages.
+First, the last census was in 2010, so the results are nearly 8 years out of date (a big problem in a rapidly changing city like Buffalo).
+Second, accessible census information is limited to race, age, and housing data.
+
+On the other hand, the ACS was completed relatively recently (2016), and includes a much wider variety of information including education and income.
+The disadvantage is that, being a survey, it does not exhaustively sample the population.
+Variables obtained from the ACS will therefore always be *estimates* and have some margin of error.
+The finer the spatial scale you drill down to, the greater the margin of error - and I needed a pretty fine spatial scale (neighborhood).
+In the end, I decided the advantages of the ACS dataset outweighed this limitation.
+
+# Manipulating the ACS Data
+
+There are thousands of variables in the complete ACS dataset.
+You can get a description for all of them using `load_variables`:
+
+```{r,eval=FALSE}
+View(load_variables(2016, "acs5", cache = TRUE))
+```
+
+After some tedious manual searching, I identified a variable for median income (`B07011_001`)and a set of variables for the number of people 25+ with a given education level (`B15003_*`).
+I made a list of these variable codes and gave them slightly better names:
+
+```{r}
+get_vars = c('B07011_001',paste('B15003_', sprintf('%03d',c(1,17:25)),sep=''))
+names(get_vars) =  c('income','all','hs','ged','some0','some1',
+					 'as','bs','ms','prof','phd')
+```
+
+When querying the ACS data for these variables, you also need to provide a spatial resolution (e.g., state, county). 
+The finest-scale spatial resolution for which I was able to get data was the census tract.
+The `get_acs` function from `tidycensus` can be used to extract a set of variables at a given spatial resolution.
+I limited the output dataset to Erie County to keep the download small - I'll cut it down to only the Buffalo area later.
+
+```{r,message=FALSE,warning=FALSE}
+acs_data = get_acs(geography = 'tract', variables = get_vars,
+				   state='NY',county='Erie',geometry='TRUE')
+
+#Look at dataset
+as_tibble(acs_data) %>% select(-geometry)
+```
+
+As promised, the result is a tidy dataset where each row represents one census tract by variable combination.
+The estimate column provides the value for a given variable, and the `moe` column provides the margin of error.
+As you can see, there are some pretty large margins of error around some of the variable estimates, no doubt a product of small sample size.
+In a serious analysis, the variability in these estimates ought to be accounted for; for the purposes of this post, I will ignore it.
+
+To make the rest of the analysis easier, I needed to split each ACS variable into its own column.
+This is very easy with the `spread` function.
+I also calculated two summary variables for education: the percent of people in the tract with at least a high school degree, (`atleast_hs`) and the percent of people with at least a Bachelor's degree (`atleast_bs`).
+
+```{r}
+library(tidyverse)					   
+acs_spread = acs_data %>% 
+	select(-moe) %>% 
+	spread(key=variable,value=estimate) %>%
+	mutate('atleast_hs' = (hs + some0 + some1 + as + bs + ms + prof + phd) / all,
+		   'atleast_bs' = (bs + ms + prof + phd) / all) %>%
+	select(GEOID,income,atleast_hs,atleast_bs)
+```
+
+# Joining the ACS and Recycling Data
+
+The census tracts are roughly equal in size to Buffalo neighborhoods, but the boundaries don't exactly match:
+
+```{r,message=FALSE,warning=FALSE}
+library(sf)
+library(ggplot2)
+
+thm = theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+#Dataset from the last post
+#Neighborhood boundaries
+nb = spatial_rec %>% ggplot() +
+	labs(title = 'Neighborhoods') + thm +
+	geom_sf()
+
+#Census tract boundaries
+tr = acs_data %>%
+	st_intersection(spatial_rec) %>%
+	group_by(NAME) %>%
+	summarize() %>%
+	ggplot() +
+	labs(title = 'Census Tracts') + thm +
+	geom_sf()
+
+gridExtra::grid.arrange(nb,tr, ncol=2)
+```
+
+Thus, the ACS data cannot be directly matched to a given neighborhood.
+I needed to calculate an average value for each ACS variable across all the tracts that fell in a given neighborhood, weighted by how much of the area of the neighborhood a given tract made up.
+My approach to solving this problem was as follows:
+
+1. Calculate the area of each neighborhood using the dataset from the last post (`spatial_rec`).
+
+2. Find out which census tracts overlapped each neighborhood, and what percentage of the area of the neighborhood each of these tracts accounted for (`wt`).
+
+```{r,warning=FALSE,message=FALSE}
+
+step1_2 = spatial_rec %>%
+	mutate(tot_area = st_area(.) %>% as.numeric()) %>%
+	st_intersection(acs_spread) %>%
+	mutate(area = st_area(.) %>% as.numeric(),
+		   wt = area / tot_area)
+```
+
+3. Use `wt` to get a weighted average of the three ACS variables for each neighborhood.
+
+```{r,warning=FALSE,message=FALSE}
+step3 = step1_2 %>%
+	group_by(NEIGHBORHOOD) %>%
+	summarize(inc = sum(income * wt),
+			  hs = sum(atleast_hs * wt * 100),
+			  bs = sum(atleast_bs * wt * 100)) %>%
+	st_set_geometry(NULL)
+```
+
+4. Get the final dataset by joining this data back to the original neighborhood dataset:
+
+```{r,warning=FALSE,message=FALSE}
+final = spatial_rec %>%
+	left_join(step3, by='NEIGHBORHOOD')
+
+as_tibble(final)
+```
+
+# Visualize the Data
+
+The following plot shows the spatial distribution of the income and education variables, along with recycling rate.
+
+```{r}
+inc.fig = final %>% ggplot() + thm +
+	labs(fill = 'Median\nIncome ($)') +
+	scale_fill_gradient(low='red',high='green') +
+	geom_sf(aes(fill=inc))
+hs.fig = final %>% ggplot() + thm +
+	labs(fill = 'Adults With\nHS diploma (%)') +
+	scale_fill_gradient(low='red',high='green') +
+	geom_sf(aes(fill=hs))
+bs.fig = final %>% ggplot() + thm +
+	labs(fill = 'Adults with\nBachelors (%)') +
+	scale_fill_gradient(low='red',high='green') +
+	geom_sf(aes(fill=bs))
+rc.fig = final %>% ggplot() + thm +
+	labs(fill = 'Recycling\nRate (%)') +
+	scale_fill_gradient(low='red',high='green') +
+	geom_sf(aes(fill=MnRate))
+gridExtra::grid.arrange(inc.fig, hs.fig, bs.fig, rc.fig, ncol=2,
+						top='Income, Education, and Recycling Rate are Related')
+```
+
+Based on the figure, there appears to be a positive relationship education level and median income (unsurprising). 
+Furthermore, more educated and higher-income neighborhoods appear to have a higher recycling rate.
+A more formal analysis is needed to confirm these relationships.
+
+# Look for Relationships
+
+Now that I have income and education data for each neighborhood, I can proceed with the actual analysis.
+
+
+```{r}
+final %>%
+	ggplot(aes(x = hs, y = MnRate)) +
+	geom_point() +
+	geom_smooth(method=lm)
+
+test3 %>%
+	ggplot(aes(x = bs, y = MnRate)) +
+	geom_point()
+
+test3 %>%
+	ggplot(aes(x = inc, y = MnRate)) + geom_point()
+
+
+fit = lm(MnRate ~ inc, data=test3)
+
+plot(test3 %>% filter(!is.na(MnRate)) %>% pull(bs),residuals(fit))
+
+full = lm(MnRate ~ inc + bs, data=test3)
+```
+
+
