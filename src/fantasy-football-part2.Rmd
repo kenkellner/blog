@@ -1,0 +1,53 @@
+---
+title: 'Fantasy Football Part II: Should the Regular Season Matter?'
+date: 2013-07-13
+output:
+  html_document:
+    theme: journal
+    css: style.css
+    highlight: pygments
+---
+
+# Introduction
+
+One of the most frustrating (and also exciting) things about fantasy football is the overwhelming importance of having your team "peak" at the right time. No matter how well your team does early in the season, if things start to fall apart at the end (benchings, injuries, even players going up against better defenses), you are bound to lose to that upstart team that snuck into the playoffs at the last second with a 4-game win streak.
+
+Essentially, the current structure of most fantasy leagues is such that as long as you manage to get into the playoffs (usually the top 4 teams), what happens in the regular season barely matters. Your regular season record will get you a higher seed, but as you can see from the chart above, that doesn't seem to be worth much! The highest seed (best record) was actually the least likely to win the championship in my dataset. Your total points scored in a given season is even more worthless - it typically just serves as a tiebreaker. All that matters in the playoffs is your team peaking at the perfect time (and to a lesser degree, starting the right players).
+
+Fantasy sports are arguably supposed to emulate the real sports on which they are based. Is the overwhelming importance of luck in fantasy playoffs mirrored in the actual NFL? Well, to a certain degree it is. Sometimes teams are less than impressive in the regular season, stumbling into a wildcard playoff spot. Then, at the perfect time, they go on a run to the Super Bowl. The 2011 New York Giants, who went 9-7 in the regular season en route to a Super Bowl victory over the Patriots, are a great example.
+
+However, the NFL has an additional constraint that makes the regular season (and playoff seeding) more important: home field advantage. The teams with the best regular-season records get to play in their home stadium in the playoffs. This confers an advantage  - [not a huge advantage, and maybe not for the reasons you expect](http://freakonomics.com/2011/12/18/football-freakonomics-how-advantageous-is-home-field-advantage-and-why/) - but an advantage nonetheless, and one that cannot really be carried over into fantasy football since home vs. away is meaningless.
+
+# "Home Field Advantage" in Fantasy Football
+
+I think that the current situation, where the importance of the regular season is minimized, is not ideal. Fantasy football success is enormously reliant on luck. That's OK, but I'd argue that it's too reliant on luck. The two statistics which are the most highly related to player skill vs. luck are total points scored, and to a lesser degree regular season record. I think they should play a larger role in playoff outcomes so strange figures like the one at the top of this post are less likely, and I have some ideas on how this could be implemented.
+
+We can create an artificial "home field advantage" of sorts (perhaps better called a "handicap", as in golf) that is based on success in the fantasy regular season. The basic idea is simple: give teams bonus points in the playoffs based on their success in the regular season. We already do the reverse - in some of my leagues we are penalized points if we take too long paying our dues. Most fantasy league websites allow for easy point addition and subtraction by the commissioner.
+
+The question is, how should we allocate those points? There are two ways that I see, which could be used separately or together.
+
+1. Bonus points based on total points scored during the regular season - the ultimate metric of how good someone's team really is. I propose we simply take the difference between a given player's average score per game (say 100) and the league per-game average (say 90) and add it on to their score. Alternatively, we could take this value (10) and multiply it by a scalar first, say 0.5 or 2, and then add it. As an additional option, players in the playoffs who scored fewer points than average could be penalized in the same way.
+
+2. Bonus points based on playoff seed. This would make final regular season record a much more important statistic. My proposal is to allot the top 1, 1-2, or 1-3 playoff seeds a proportion of the league average points per game as a bonus. For example, the top seed could receive a bonus of 10% of the league average points per game (say 10% of 90, or 9), and the 2nd seed could receive a bonus of 5% (4.5).
+
+Bonus points using either or both of the methods described above would be calculated at the end of the regular season, and added to a player's score in every playoff game. That's simple enough, but what's the best way to decide how exactly the bonuses are calculated?
+
+# Modeling Fantasy Handicaps
+
+I've created a model, based on the 16 fantasy leagues I've participated in, that retroactively determines fantasy league champions based on how bonus points are calculated. Below is a link to a [Shiny](https://shiny.rstudio.com/) application with two graphs - one is identical to the first graph in this post, showing league championships by playoff seed. The second shows league championships by regular season rank in total points scored. Currently, they show unadjusted scores. Arguably, we should try to design our bonus point rules so that they shift more championships towards the top seeds, and towards the teams that scored the most points in the regular season.
+
+Beside the graphs is a series of sliders that represent various options for calculating the fantasy "handicap" or bonus points. When you change one of these values, the graphs will update automatically to show you how the leagues would have played out under those rules. Try it out!
+
+<center>
+<div style="display:none;"><iframe id='frame' width="90%" height="930"></iframe></div>
+
+<div style=''> <a id='applink' 
+onClick='document.getElementById("frame").src = "https://kenkellner.shinyapps.io/ff-handicaps/";
+document.getElementById("frame").parentNode.style.display="";
+document.getElementById("applink").parentNode.style.display="none";'>Load Shiny app</a></div>
+</center>
+<br>
+
+To give you an example of some values that might generate an ideal distribution of league championships, try setting the multiplier for points above average to 3 (so players get 3 times the difference between their average points per game and the overall average), the first seed bonus to 0.2 (so top seeds get a bonus of 20% of the league average score) and the second seed bonus to 0.1. These might be extreme values, but they generate a distribution that makes more sense.
+
+Play around with these values, and see what makes the most sense to you. Do you want the first seed/highest point scorer to win most of the time? Perhaps just all seeds winning about evenly is ideal? I'd love to hear your feedback on this system.
