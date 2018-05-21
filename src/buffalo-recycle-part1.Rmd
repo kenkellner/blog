@@ -325,3 +325,5 @@ spatial_rec %>%
 
 So far I haven't done much with this dataset other than look at surface patterns.
 Now that I have the recycling data georeferenced, I plan to model recycling rate as a function of other variables that are spatially referenced - for example, U.S. Census block data.
+
+Read part 2 of this analysis [here](buffalo-recycle-part2.html).

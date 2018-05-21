@@ -8,32 +8,34 @@ output:
     highlight: pygments
 ---
 
-```{r,echo=FALSE,warning=FALSE,message=FALSE}
+```{r,echo=FALSE,warning=FALSE,message=FALSE,results='hide'}
 #Data from last post
+options(tidyverse.quiet=TRUE)
+options(tidycensus.show_progress=FALSE)
 tempR <- tempfile(fileext = ".R")
 library(knitr)
-purl("buffalo-recycle-part1.Rmd", output=tempR)
-source(tempR)
+invisible(purl("buffalo-recycle-part1.Rmd", output=tempR))
+invisible(source(tempR))
 unlink(tempR)
 ```
 
 # Introduction
 
-In [part 1](https://kenkellner.com/blog/buffalo-recycle-part1.html) of my analysis of the [Buffalo recycling data]() in `R`, I downloaded the raw dataset, looked at some general patterns, and added geospatial information. 
+In [Part 1](buffalo-recycle-part1.html) of my analysis of the [Buffalo recycling data](https://data.buffalony.gov/Quality-of-Life/Neighborhood-Curbside-Recycling-Rates/ug79-xatx) in `R`, I downloaded the raw dataset, looked at some general patterns, and added geospatial information. 
 With this dataset in hand, my next step was to identify variables might be good predictors of a neighborhood's recycling rate.
 
 I was primarily interested in how two variables might affect neighborhood recycling rate:
 
-1. Income, and
+1. Income
 2. Education level
 
 Unfortunately, neither the recycling data itself nor the neighborhood boundary dataset contain any socioeconomic information about the neighborhoods, so I needed to introduce another dataset. This type of information was not readily available on the Buffalo OpenData portal. Thus, I explored an alternative data source: the U.S. Census Bureau.
 
 # Census Bureau Data
 
-Anyone can download Census data freely from the [website]().
+Anyone can download Census data freely from the [website](https://www.census.gov/data.html).
 However, this is a rather slow and clunky method.
-Instead I obtained a key for API access to the Census data from [here](), and used the `tidycensus` package in R to download census data of interest.
+Instead I obtained a key for API access to the Census data from [here](https://api.census.gov/data/key_signup.html), and used the `tidycensus` package in R to download census data of interest.
 
 ```{r,message=FALSE,warning=FALSE}
 library(tidycensus)
@@ -79,15 +81,18 @@ The finest-scale spatial resolution for which I was able to get data was the cen
 The `get_acs` function from `tidycensus` can be used to extract a set of variables at a given spatial resolution.
 I limited the output dataset to Erie County to keep the download small - I'll cut it down to only the Buffalo area later.
 
-```{r,message=FALSE,warning=FALSE}
+```{r,message=FALSE,warning=FALSE,results='hide'}
 acs_data = get_acs(geography = 'tract', variables = get_vars,
 				   state='NY',county='Erie',geometry='TRUE')
 
-#Look at dataset
+```
+
+As promised, the result is a tidy dataset where each row represents one census tract by variable combination:
+
+```{r}
 as_tibble(acs_data) %>% select(-geometry)
 ```
 
-As promised, the result is a tidy dataset where each row represents one census tract by variable combination.
 The estimate column provides the value for a given variable, and the `moe` column provides the margin of error.
 As you can see, there are some pretty large margins of error around some of the variable estimates, no doubt a product of small sample size.
 In a serious analysis, the variability in these estimates ought to be accounted for; for the purposes of this post, I will ignore it.
@@ -176,7 +181,7 @@ as_tibble(final)
 
 The following plot shows the spatial distribution of the income and education variables, along with recycling rate.
 
-```{r}
+```{r,warning=FALSE,message=FALSE}
 inc.fig = final %>% ggplot() + thm +
 	labs(fill = 'Median\nIncome ($)') +
 	scale_fill_gradient(low='red',high='green') +
@@ -194,37 +199,79 @@ rc.fig = final %>% ggplot() + thm +
 	scale_fill_gradient(low='red',high='green') +
 	geom_sf(aes(fill=MnRate))
 gridExtra::grid.arrange(inc.fig, hs.fig, bs.fig, rc.fig, ncol=2,
-						top='Income, Education, and Recycling Rate are Related')
+						top='Income, education, and recycling rate are related')
 ```
 
 Based on the figure, there appears to be a positive relationship education level and median income (unsurprising). 
 Furthermore, more educated and higher-income neighborhoods appear to have a higher recycling rate.
-A more formal analysis is needed to confirm these relationships.
 
-# Look for Relationships
+Scatterplots of income and education against recycling rate support this conclusion:
 
-Now that I have income and education data for each neighborhood, I can proceed with the actual analysis.
-
-
-```{r}
+```{r,warning=FALSE,message=FALSE}
 final %>%
-	ggplot(aes(x = hs, y = MnRate)) +
+	gather(key = 'var', value = 'val', inc, bs, hs) %>%
+	mutate(var = recode(var, inc = 'Income', bs = '% Bachelors', 
+						hs = '% High School')) %>%
+	mutate(var = factor(var, levels=c('Income', '% High School', '% Bachelors'))) %>%
+	ggplot(aes(x = val, y = MnRate)) +
+	labs(y = 'Mean Recycling Rate (%)',
+		 title = 'Income, education, and recycling rate are related') +
+	theme(axis.title.x = element_blank()) +
 	geom_point() +
-	geom_smooth(method=lm)
-
-test3 %>%
-	ggplot(aes(x = bs, y = MnRate)) +
-	geom_point()
-
-test3 %>%
-	ggplot(aes(x = inc, y = MnRate)) + geom_point()
-
-
-fit = lm(MnRate ~ inc, data=test3)
-
-plot(test3 %>% filter(!is.na(MnRate)) %>% pull(bs),residuals(fit))
-
-full = lm(MnRate ~ inc + bs, data=test3)
+	geom_smooth(method=lm) +
+	facet_wrap(~var, ncol=2, scales='free')
 ```
 
+A more formal analysis is needed to confirm these relationships.
 
+# Model Fitting and Selection
+
+I have multiple predictors and a response variable that is reasonably normally distributed (maybe a little right-skewed):
+
+```{r,warning=FALSE,message=FALSE}
+final %>%
+	ggplot(aes(x = MnRate)) +
+	geom_histogram(bins=15) +
+	labs(x = 'Recycling Rate (%)')
+```
+
+Multiple linear regression therefore seems like the obvious modeling approach.
+But what combination of predictor variables should be in the final model?
+What about interactions?
+Keeping both education variables is probably unnecessary (and even problematic) since they are highly correlated with each other:
+
+```{r}
+cor(final$hs, final$bs)
+```
+
+Given this high correlation, I decided to discard `hs` and fit models with all possible combinations of `inc` and `bs` (including the interaction):
+
+```{r,message=FALSE}
+library(MuMIn)
+
+final_noNA = final %>% filter(!is.na(MnRate))
+
+full_model = lm(MnRate ~ inc*bs, data=final_noNA)
+
+options(na.action = 'na.fail')
+all_models = dredge(full_model)
+```
+
+I then ranked the models with AIC:
+
+```{r}
+all_models
+```
+
+The full model including the interaction between education and income was ranked highest, with a weight of `r round(all_models$weight[1],2)`.
+This model explained about `r paste(round(summary(full_model)$adj.r.squared*100,0),'%',sep='')` of the variation in the mean recycling rate:
+
+```{r}
+summary(full_model)
+```
+
+Matching the figures shown earlier, both income and education level in a neighborhood had signficant, positive relationships with recycling rate.
+To put things in more real terms, an increase in median income by \$5000 resulted in a corresponding increase in recycling rate of `r paste(round(full_model$coefficients[2]*5000,2),'%',sep='')`.
+Similarly, an increase of 10% in the proportion of adults with Bachelor's degrees resulted in a `r paste(round(full_model$coefficients[3]*10,2),'%',sep='')` increase in recycling rate. The negative interaction is interesting - the positive effects of income and education on recycling rate were tempered when both were high.
+
+As I noted earlier, these results should be interpreted with caution given that they are based on ACS estimates.
