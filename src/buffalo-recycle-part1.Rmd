@@ -3,7 +3,6 @@ title: Comparing Recycling Rates Among Buffalo Neighborhoods (Part 1)
 date: 2018-05-13
 output:
   html_document:
-    theme: journal
     css: style.css
     highlight: pygments
 ---

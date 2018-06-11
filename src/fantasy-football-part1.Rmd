@@ -3,7 +3,6 @@ title: 'Fantasy Football: Science or Luck? (Part 1)'
 date: 2013-04-02
 output:
   html_document:
-    theme: journal
     css: style.css
     highlight: pygments
 ---

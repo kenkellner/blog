@@ -3,7 +3,6 @@ title: Simple Static Site Generator with R, Python, and GNU Make
 date: 2018-05-15
 output:
   html_document:
-    theme: journal
     css: style.css
     highlight: pygments
 ---

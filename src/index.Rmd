@@ -2,7 +2,6 @@
 title: Posts
 output:
   html_document:
-    theme: journal
     css: style.css
 ---
 

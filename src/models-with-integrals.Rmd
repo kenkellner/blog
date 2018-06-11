@@ -3,7 +3,6 @@ title: Fitting Bayesian Models with Integrals
 date: 2018-06-03
 output:
   html_document:
-    theme: journal
     css: style.css
     highlight: pygments
 ---

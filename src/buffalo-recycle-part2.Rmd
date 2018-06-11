@@ -3,7 +3,6 @@ title: 'Recycling in Buffalo Part 2: Effects of Income and Education'
 date: 2018-05-21
 output:
   html_document:
-    theme: journal
     css: style.css
     highlight: pygments
 ---
