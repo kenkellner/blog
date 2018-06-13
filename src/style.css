@@ -52,3 +52,7 @@ code.r{ /* Code block */
 pre { /* Code block - determines code spacing between lines */
     font-size: 16px;
 }
+
+a:link { color:#17547f; text-decoration: none;}
+a:visited { color:#17547f; text-decoration: none;}
+a:hover { color:#17547f; text-decoration: underline;}
