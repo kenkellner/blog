@@ -1,0 +1,37 @@
+---
+title: Web App for Benchmarking Scholarly Performance
+date: 2018-07-10
+output:
+  html_document:
+    css: style.css
+    highlight: pygments
+---
+
+A paper I co-authored titled "Benchmarking Scholarly Performance by Faculty in Forestry and Forest Products" was recently [published](https://academic.oup.com/jof/article/116/4/320/4930773) in *Journal of Forestry*.
+
+Here's the abstract:
+
+> Measures of scholarly performance have proliferated, without corresponding efforts to standardize comparisons among faculty.
+> An exception was a recent use of regression to model sources of variation in scholarly performance by fisheries and wildlife faculty.
+> We applied this model-based method to data for 404 forestry and forest products faculty from 33 doctoral-degree-granting institutional members of the National Association of University Forest Resources Programs.
+> Regression models were developed for h-index, the number of publications with at least h citations, and m quotient, the annual rate of change in h-index since conferral of the Ph.D. Years since Ph.D. and percent of appointment allocated to research were important predictors for h-index and m quotient.
+> We also noted positive subdisciplinary effects for research foci in conservation, ecology, disease, and quantitative methods, and negative effects for management and social science.
+> Standardized residuals enabled relative performance to be compared among faculty who differ in academic age, research appointment, and subdisciplinary focus.
+> Model-based benchmarking provides much-needed context for interpretation of quantitative performance metrics and can supplement comprehensive peer evaluation.
+> An interactive web application is provided to facilitate such benchmarking.
+
+My main contribution to the paper was development of the [Shiny](https://shiny.rstudio.com/) web application.
+We hope it's a useful tool for faculty and administrators to assess one metric of the impact of a scientist's scholarly work (i.e., citations).
+You can try out the app below.
+
+<center>
+<div style="display:none;"><iframe id='frame' width="100%" height="910"></iframe></div>
+
+<div style=''> <a id='applink' 
+onClick='document.getElementById("frame").src = "https://swihartlab.shinyapps.io/naufrp-benchmark/";
+document.getElementById("frame").parentNode.style.display="";
+document.getElementById("applink").parentNode.style.display="none";'>Load Shiny app</a></div>
+</center>
+<br>
+
+The R source code for the app is [here](https://github.com/kenkellner/naufrp-benchmark).
