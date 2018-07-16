@@ -1,0 +1,270 @@
+---
+title: Distribution of Urban Trees in Buffalo (Part 1)
+date: 2018-07-16
+output:
+  html_document:
+    css: style.css
+    highlight: pygments
+---
+
+```{r,echo=FALSE}
+options(tidyverse.quiet=TRUE)
+```
+
+# Introduction
+
+This is part of a series of posts where I examine data sets available as part of the City of Buffalo's [Open Data portal](https://data.buffalony.gov/). Previously I examined recycling data ([post 1](https://kenkellner.com/blog/buffalo-recycle-part1.html) and [post 2](https://kenkellner.com/blog/buffalo-recycle-part2.html)).
+
+The next dataset that caught my eye is a very impressive [tree inventory](https://data.buffalony.gov/Quality-of-Life/Tree-Inventory/n4ni-uuec) from the Bureau of Forestry. It contains information on the species, size, location, and economic contributions of every single street tree in the city.
+
+# Get the Tree Inventory Data
+
+First, I will load the required `R` libraries.
+I'll be using `RSocrata` to access the Socrata API in `R`, the `tidyverse` family of packages to manipulate the data, `sf` to handle spatial data, and `ggplot2` for figures.
+
+```{r,warning=FALSE,message=FALSE}
+library(RSocrata)
+library(tidyverse)
+library(sf)
+library(ggplot2)
+```
+
+Identify the URL for the tree inventory dataset in CSV form:
+
+```{r}
+buf_datasets = ls.socrata('https://data.buffalony.gov')
+ind = which(buf_datasets$title == 'Tree Inventory')
+buf_datasets$distribution[[ind]]$mediaType
+csv_url = buf_datasets$distribution[[ind]]$downloadURL[1]
+csv_url
+```
+
+Then load the dataset into `R` using `RSocrata` as a tibble:
+
+```{r,eval=F}
+trees_raw = read.socrata(csv_url) %>% as_tibble()
+trees_raw
+```
+
+```{r,echo=F}
+#Cache the dataset if necessary
+if (file.exists('../data/trees_raw.Rdata')){
+  load('../data/trees_raw.Rdata')
+} else {
+  dir.create('../data')
+  trees_raw = read.socrata(csv_url) %>% as_tibble()
+  save(trees_raw,file='../data/trees_raw.Rdata')
+}
+trees_raw
+```
+
+A quick look at the first 10 rows reveals that there are rows in the dataset for stumps (`STUMP`) and for, presumably, locations where a tree *could* be planted (`VACANT`).
+This is potentially interesting information but not for what I'm planning to do with this dataset.
+Thus, I removed these rows:
+
+```{r}
+trees = trees_raw %>%
+  filter(! Common.Name %in% c('STUMP', 'VACANT')) %>%
+  rename(Species = Common.Name,
+         Eco_Value = Total.Yearly.Eco.Benefits....)
+```
+
+# Initial Visualizations
+
+First I wanted to get a rough idea of the spatial distribution of the trees.
+My first approach was to convert the `trees` dataset to a simple feature (`sf`) object.
+However, I found that `geom_sf()`, the `ggplot2` function normally for plotting `sf` objects, was extremely slow for large spatial point datasets (like this dataset).
+Thus, I instead used a combination of `geom_point()` and `coord_map()`, as suggested [here](https://github.com/tidyverse/ggplot2/issues/2718).
+
+```{r}
+trees %>%
+  ggplot(aes(x = Longitude, y = Latitude, color = Species)) +
+  geom_point(size=0.4) +
+  coord_map() +
+  theme(legend.position='none')
+```
+
+It is clear from this figure that the trees are primarily along roads.
+Each tree species is represented by a different color, but I had to hide the legend because there are so many species represented in the dataset.
+
+It's easier to visualize distributions of different species if the figure is limited to only the most common species (in this case, trees with more than 1500 individuals):
+
+```{r}
+#Make list of most common species
+common_species = trees %>%
+  group_by(Species) %>%
+  summarize(n=n()) %>%
+  filter(n>1500) %>%
+  pull(Species)
+
+common_species
+
+#Filter dataset and plot
+trees %>%
+  filter(Species %in% common_species) %>%
+  ggplot(aes(x = Longitude, y = Latitude, color = Species)) +
+  geom_point(size=0.4) +
+  coord_map() +
+  guides(colour = guide_legend(override.aes = list(size=2)))
+```
+
+Several varieties of maples are among the most common trees in Buffalo.
+Another striking pattern here is the concentration of elms (specifically, the Christine Buisman cultivar of *Ulmus minor*) near Soldier's Circle.
+Buisman is known for discovering the cause of Dutch elm disease and developing resistant varieties.
+
+# Visualizing Density, Species Richness, and Economic Value
+
+To expand on the basic visualizations above, I wanted to generate visualizations of three variables derived from the tree dataset: (1) tree density; (2) tree species richness (that is, the number of unique species present) per unit area; and (3) total economic value created by urban trees per unit area.
+To accomplish this, I divided up the Buffalo region into 600 roughly square-shaped cells of equal area (20x30), and calculated the value of the three variables within each cell - essentially a crude rasterization.
+
+## Creating the (Raster) Cell Boundaries
+
+The first step was to convert the `tree` dataset into an `R` simple feature, so I could manipulate it with the tools in package `sf`.
+The dataset included columns with the precise latitude and longitude of each tree, which I then transformed to a UTM projection.
+
+```{r}
+trees_proj = trees %>%
+  st_as_sf(coords = c("Longitude", "Latitude"),
+          crs = "+proj=longlat +datum=WGS84") %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84")
+```
+
+Next I used the `sf` function `st_make_grid()` to construct a 20x30 raster covering the Buffalo area (more specifically, the area of the `trees` dataset).
+The spatial information of the resulting simple feature was in a column named `geom`, which I renamed `geometry` so it would be recognized properly when creating figures later.
+Finally I added two new columns: one that contained a unique ID for each cell (the row number) and one containing the cell area for use in future calculations.
+
+```{r}
+trees_grid = st_sf(geom=st_make_grid(trees_proj,n=c(20,30))) %>%
+              st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+              rename(geometry = geom) %>%
+              rownames_to_column() %>%
+              mutate(area = st_area(.))
+```
+
+Here's the point density plot of crabapple trees, divided up by the grid cell map:
+
+```{r}
+trees_proj %>% 
+  filter(Species == 'CRABAPPLE') %>% 
+  ggplot() + geom_sf(data=trees_grid) +
+  geom_sf()
+```
+
+## Calculating Variable Values in Each Cell
+
+With the raster cell boundaries in hand, the next step was to identify which specific cell each tree was located inside, using `st_intersection()`:
+
+```{r,warning=FALSE}
+trees_proj = trees_proj %>%
+  st_intersection(trees_grid)
+```
+
+With each tree assigned to a single grid cell, I calculated the three summary statistics for each grid cell:
+
+```{r}
+tree_stats = trees_proj %>%
+  st_set_geometry(NULL) %>%
+  group_by(rowname) %>% #Unique cell ID
+  summarize(richness = length(unique(Species)),
+            n = n(), #Count
+            density = as.numeric(n/(min(area)/10000)), #Density in trees/ha
+            #Economic value in $ per hectare
+            eco_val = as.numeric(sum(Eco_Value)/(min(area)/10000))) 
+
+tree_stats
+```
+
+Finally, I joined these summary stats to the original `trees_grid` raster to allow them to be used in figures.
+
+```{r}
+trees_grid = trees_grid %>%
+  left_join(tree_stats, by='rowname')
+```
+
+## Plotting the Results
+
+To visualize the spatial distribution of tree density, species richness, and economic value across the city, I built a series of figures in which the color of a grid cell corresponds to the value of the variable of interest.
+
+First, I set a common `ggplot2` theme for each figure to avoid repeating code:
+
+```{r}
+plot_theme = theme(axis.ticks.x = element_blank(),
+                   axis.text.x = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   axis.text.y = element_blank())
+plot_cols = scale_fill_gradient(low='red', high='green')
+```
+
+Next, I generated each raster plot and then combined them into a single figure for easy comparison:
+
+```{r}
+#Tree density plot
+dens_plot = trees_grid %>%
+  ggplot() + 
+  geom_sf(aes(fill=density)) +
+  labs(fill='Density \n(trees/hectare)') +
+  plot_theme + plot_cols
+
+#Tree richness plot
+rich_plot = trees_grid %>%
+  ggplot() + 
+  geom_sf(aes(fill=richness)) +
+  labs(fill='Number of tree \nspecies present') +
+  plot_theme + plot_cols
+
+#Economic value plot
+ecoval_plot = trees_grid %>%
+  ggplot() + 
+  geom_sf(aes(fill=eco_val)) +
+  labs(fill='Tree economic \nvalue ($/hectare)') +
+  plot_theme + plot_cols
+
+#Combine into multi-panel plot for comparison
+gridExtra::grid.arrange(dens_plot,rich_plot,ecoval_plot,ncol=2)
+```
+
+For all three variables, there appear to be two clusters of high values that I guessed where associated with larger city parks.
+
+To test this hypothesis I decided to overlay park boundaries on top of the richness figure.
+Luckily Buffalo OpenData has spatial information for parks available in the form of a shapefile (as part of the dataset titled `'Parks'`).
+However, the `RSocrata` package does not have a convenient way of reading shapefile data directly into R the way it does for CSVs.
+To facilitate this and future similar tasks I wrote a small function `get_shapefile()` that downloads a zipped shapefile from a provided URL, unpacks it into a temporary directory, and reads it into R as a simple feature.
+
+```{r}
+get_shapefile <- function(url){
+  dest_dir = tempdir()
+  dest <- tempfile(tmpdir=dest_dir)
+  download.file(url, dest, quiet=T)
+  unzip(dest, exdir = dest_dir)
+  shape_name = grep('.shp',list.files(dest_dir),value=T)
+  setwd(dest_dir)
+  sf::st_read(shape_name,quiet=TRUE) 
+}
+```
+
+I grabbed the shapefile URL using `ls.socrata()` and fed it to the new function:
+
+```{r}
+ind = which(buf_datasets$title == 'Parks')
+shape_url = buf_datasets$distribution[26][[1]]$downloadURL[3]
+park_bounds = get_shapefile(shape_url)
+```
+
+Then I overlaid the park boundaries on the species richness raster:
+
+```{r}
+rich_plot + 
+  geom_sf(data=park_bounds %>% 
+          filter(acres > 5),
+        alpha=0.6)
+```
+
+As predicted, areas of high tree species richness tend to be located inside parks.
+
+# Future Directions
+
+So far I have only looked at broad spatial patterns in Buffalo trees.
+Next I plan to more formally examine variables that affect the spatial distribution of trees, using a Poisson point process model.
+
+I've identified several papers that looked at how economic and demographic variables impact urban trees (for example, [this one](http://journals.sagepub.com/doi/abs/10.1068/a41236) from Tampa, FL).
+As with my analysis of the Buffalo [recycling data](https://kenkellner.com/blog/buffalo-recycle-part2.html), the American Community Survey (ACS) should be a good source for these variables.
