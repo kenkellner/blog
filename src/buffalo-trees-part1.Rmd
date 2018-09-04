@@ -259,6 +259,14 @@ rich_plot +
         alpha=0.6)
 ```
 
+```{r,echo=F}
+#Save density plot for use in another post
+dens_overlay = dens_plot +
+  geom_sf(data=park_bounds %>%
+          filter(acres > 5), alpha=0.6)
+saveRDS(dens_overlay, '../data/dens_overlay.rds')
+```
+
 As predicted, areas of high tree species richness tend to be located inside parks.
 
 # Future Directions

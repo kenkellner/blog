@@ -1,0 +1,352 @@
+---
+title: Distribution of Urban Trees in Buffalo (Part 2)
+date: 2018-09-04
+output:
+  html_document:
+    css: style.css
+    highlight: pygments
+---
+
+```{r,echo=FALSE}
+options(tidyverse.quiet=TRUE)
+library(tidyverse)
+suppressMessages(library(ggplot2))
+```
+
+# Introduction
+
+This is part two of an examination of the city of Buffalo's [tree inventory](https://data.buffalony.gov/Quality-of-Life/Tree-Inventory/n4ni-uuec).
+Part one is [here](buffalo-trees-part1.html).
+There is an enormous amount of information in the dataset and I'm only going to scratch the surface of what could be done with it.
+
+In the previous post, I qualitatively examined the spatial distribution of tree density, richness, and economic value across the city.
+I'll now take a more quantitative approach using Poisson point process models.
+
+# Poisson Point Processes
+
+A Poisson point process (PPP) is a statistical model that's appropriate for a series of events that occur at a random, but reasonably predictable, rate.
+For example, if you counted the number of cars that drove by your house from 12:00 PM - 1:00 PM every day for a year, you'd likely find that the count each day varied, but that the counts fell into a predictable range.
+The average number of cars per day is the PPP *rate* (or *intensity*), often represented by $\lambda$.
+The larger the value of $\lambda$, the more cars you'd expect in that hour-long period; if you live in Manhattan the value of $\lambda$ will be much higher than if you live in rural Kansas.
+
+The car example above is a PPP in one dimension (time).
+You can also have PPPs in two (or more) dimensions.
+Points in geographic space are often modeled with a PPP.
+Instead of counting the number of events in a given time interval you count the number of points in a given spatial area.
+In this case, the higher the value of $\lambda$, the more points that will be in the designated area.
+
+For example, the following figure shows realizations of two PPPs in two-dimensional space, one with rate $\lambda=100$ and one with rate $\lambda=500$, five times higher.
+The red rectangle represents the spatial area of interest.
+
+```{r,echo=F,fig.height=3}
+suppressMessages(library(spatstat))
+par(mfrow=c(1,2),mar=c(1,2,1,1))
+plot(rpoispp(100),main=expression(paste(lambda,'= 100')),pch=19)
+rect(0.1,0.1,0.5,0.5, border='red',lwd=1.5)
+plot(rpoispp(500),main=expression(paste(lambda,'= 500')),pch=19)
+rect(0.1,0.1,0.5,0.5, border='red',lwd=1.5)
+```
+
+There are roughly five times as many points in the outlined area on the right figure relative to the left.
+Note that the shape and size of the "area of interest" doesn't matter, as long as it's the same in both cases - no matter how you drew it, you'd expect five times as many points on the right.
+
+## Inhomogeneous Poisson Point Processes
+
+The examples above are all *homogeneous* point processes - that is, for a given model, the rate $\lambda$ is constant.
+However in some cases we might expect $\lambda$ to vary.
+For the cars example, you might expect that the day of the week could impact the number of cars going by - there might be fewer cars on weekend days.
+This is an *inhomogeneous* (and arguably much more interesting) point process.
+
+The figure below shows a homogeneous PPP on the left, and an inhomogeneous PPP (where the rate $\lambda$ increases moving from bottom to top) on the right.
+
+```{r,echo=F,fig.height=3}
+par(mfrow=c(1,2),mar=c(1,2,1,4))
+plot(rpoispp(100),main='Homogeneous PPP', pch=19)
+p_func <- function(x,y){y*400}
+plot(rpoispp(p_func),main='Inhomogeneous PPP', pch=19)
+```
+
+# Back to the Buffalo Trees Dataset
+
+```{r,echo=F}
+#Cache the dataset if necessary
+if (file.exists('../data/trees_raw.Rdata')){
+  load('../data/trees_raw.Rdata')
+} else {
+  dir.create('../data')
+  trees_raw = read.socrata(csv_url) %>% as_tibble()
+  save(trees_raw,file='../data/trees_raw.Rdata')
+}
+```
+
+In part 1 I qualitatively observed what appeared to be a very non-random (i.e., inhomogeneous) distribution of trees across the city of Buffalo.
+
+```{r, echo=F}
+trees_raw %>%
+  filter(! Common.Name %in% c('STUMP', 'VACANT')) %>%
+  ggplot(aes(x = Longitude, y = Latitude, color = Common.Name)) +
+  geom_point(size=0.4) +
+  coord_map() +
+  theme(legend.position='none')
+```
+
+Using Poisson point process models, we can test that observation quantitatively - and also determine what factors might be driving the distribution.
+For example, in part 1 I also (unsurprisingly) observed that tree density appeared to be higher inside city parks:
+
+```{r, echo=F}
+#Re-make density figure if it doesn't exist
+if (!file.exists('../data/dens_overlay.rds')){
+  dir.create('../data')
+  tempR <- tempfile(fileext = ".R")
+  library(knitr)
+  invisible(purl("buffalo-trees-part1.Rmd", output=tempR))
+  invisible(source(tempR))
+  unlink(tempR)
+}
+dens_overlay <- readRDS('../data/dens_overlay.rds')
+dens_overlay
+```
+
+In this analysis, I tested three hypotheses using Poisson point process models:
+
+1. The distribution of trees in Buffalo is non-random (inhomogeneous)
+2. The density of trees is higher in city parks
+3. The density of trees in an area is positively related to mean income (i.e., richer areas of the city have more trees)
+
+## Read in and Clean the Tree Dataset
+
+My goal was to get UTM X-Y coordinates (in meters) for each tree in the dataset, to feed into the PPP model.
+As in part 1, I started by reading in the raw data from the Socrata API using `RSocrata`.
+I cleaned it up using `tidyverse` tools.
+
+```{r}
+library(RSocrata)
+library(tidyverse)
+buf_datasets = ls.socrata('https://data.buffalony.gov')
+ind = which(buf_datasets$title == 'Tree Inventory')
+csv_url = buf_datasets$distribution[[ind]]$downloadURL[1]
+```
+
+```{r, eval=F}
+trees_raw = read.socrata(csv_url) %>% as_tibble()
+```
+
+As I'm focused on living trees, I removed information about stumps and vacant areas.
+Since I'm not interested in individual tree species for this analysis, I also dropped all columns except for the spatial information.
+
+```{r}
+trees = trees_raw %>%
+  filter(! Common.Name %in% c('STUMP', 'VACANT')) %>%
+  select(Latitude, Longitude)
+trees
+```
+
+Finally I used the `Latitude` and `Longitude` columns to convert the dataset to a simple features object using the `sf` library.
+I then projected to UTM and add separate columns for the resulting X and Y coordinates.
+
+```{r,message=F,warning=F}
+library(sf)
+
+trees_proj = trees %>%
+  st_as_sf(coords = c("Longitude", "Latitude"),
+          crs = "+proj=longlat +datum=WGS84") %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+  mutate(X = st_coordinates(.)[,1],
+         Y = st_coordinates(.)[,2]) %>%
+  select(X,Y,geometry)
+```
+
+# Fit Poisson Point Process Models
+
+To fit PPPs, I used the `spatstat` R package which contains a variety of tools for spatial analysis.
+
+The first step was to convert the project trees dataset to a `ppp` object suitable for input into `spatstat` functions.
+The `ppp` function requires vectors of X and Y coordinates, as well as minimum and maximum X and Y coordinates for the area of interest.
+
+```{r,message=F,warning=F}
+library(spatstat)
+trees_ppp = ppp(x = trees_proj$X, y = trees_proj$Y, 
+              range(trees_proj$X), range(trees_proj$Y))
+```
+
+Plotting the `trees_ppp` object shows a familiar distribution of points:
+
+```{r}
+plot(trees_ppp,cex=0.3,pch=19)
+```
+
+## Homogeneous PPP
+
+Model fitting is done using the `ppm` function.
+I'll start by fitting a homogeneous PPP, where I assume the rate $\lambda$ is constant.
+This can be done by fitting an intercept-only model, using the usual one-sided R formula interface (where `~1` represents the intercept):
+
+```{r,message=F,warning=F}
+mod_intercept = ppm(trees_ppp, ~1)
+mod_intercept
+```
+
+The fitted model has an estimated intercept $\beta_0$ of `r round(mod_intercept$coef[1],2)` on the log scale.
+To get the rate $\lambda$ on the natural scale, take $\exp\left(\beta_0\right)$:
+
+```{r}
+exp(mod_intercept$coef[1])
+```
+
+The exact value of the rate doesn't really have a practical use, as it represents the expected number of points in a spatial region of finite, but arbitrarily small size.
+
+Note also that the printed model summary reminds us that it is a stationary (i.e., homogeneous) point process model.
+Is the homogeneous PPP model appropriate for this dataset?
+Visually, it appears that trees are non-randomly distributed.
+
+I explicitly tested my first hypothesis (that the distribution is actually inhomogeneous) using a quadrat test.
+First, I divided area of interest is divided into a grid of 5x5 evenly-sized rectangles (*quadrats*), and the number of trees in each quadrat counted:
+
+```{r}
+tree_quads = quadratcount(trees_ppp)
+```
+
+Then, I used a chi-square test to determine if the tree counts were unequal among the quadrats:
+
+```{r}
+quadrat.test(tree_quads)
+```
+
+I obtained a significant result, indicating that tree counts differed among quadrats.
+This is evidence in favor of my first hypothesis that the distribution of trees in Buffalo is inhomogeneous.
+
+## Inhomogeneous PPPs (Covariate Effects)
+
+The next step was to add two covariates to my intercept-only PPP model: location relative to city parks (inside or outside), and local average income.
+In both cases, I obtained covariates from shapefile data.
+
+### *Park Boundary Data*
+
+As in part 1, I obtained the park boundary shapefile from the Socrata API, imported it as a simple feature, and transformed it to UTM:
+
+```{r}
+get_shapefile <- function(url){
+  dest_dir = tempdir()
+  dest <- tempfile(tmpdir=dest_dir)
+  download.file(url, dest, quiet=T)
+  unzip(dest, exdir = dest_dir)
+  shape_name = grep('.shp',list.files(dest_dir),value=T)
+  setwd(dest_dir)
+  sf::st_read(shape_name,quiet=TRUE) 
+}
+
+ind = which(buf_datasets$title == 'Parks')
+shape_url = buf_datasets$distribution[26][[1]]$downloadURL[3]
+park_bounds = get_shapefile(shape_url)
+
+park_bounds = park_bounds %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84")
+```
+
+The next step was to convert it to the special raster image format required by `ppm`.
+Since I needed to do this twice, I made a dedicated function.
+The function first converts a simple feature to a raster using the `fasterize` library, then converts the raster to the format required by `ppm` using the `maptools` library.
+
+```{r}
+sf_to_im = function(sf_object, background=0, field=NULL){
+  r = fasterize::raster(sf_object, res=5)
+  r = fasterize::fasterize(sf_object, r, background=background, field=field)
+  maptools::as.im.RasterLayer(r)
+}
+```
+
+```{r}
+park_raster = sf_to_im(park_bounds)
+plot(park_raster)
+```
+
+The resulting raster takes on value 1 for cells inside a park, and 0 otherwise.
+
+### *Income Data*
+
+I obtained recent income data at the U.S. Census tract level from the American Community Survey (ACS) dataset, which I also used in a [post on recycling in Buffalo](buffalo-recycle-part2.html).
+As before, I used the Census API via the `tidycensus` package to pull ACS income data for Buffalo in simple feature format.
+
+```{r,message=F,warning=F,results='hide'}
+library(tidycensus)
+income_data = get_acs(geography = 'tract', variables = c(income='B07011_001'),
+                   state='NY',county='Erie',geometry='TRUE') %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+  st_crop(st_bbox(trees_proj)) %>%
+  st_cast()
+```
+
+I converted the raw income data to a Z-score so that model parameter estimates would be comparable:
+
+```{r}
+income_data = income_data %>%
+  mutate(estimateZ = scale(estimate))
+```
+
+Finally, as with the parks data, I converted this simple feature to a raster image.
+Higher Z-scores correspond to higher mean incomes.
+
+```{r}
+income_raster = sf_to_im(income_data, NA, "estimateZ")
+plot(income_raster)
+```
+
+### *Fit the Full Model*
+
+I now had all the pieces to fit an inhomogeneous PPP model where the rate $\lambda$ was a function of location relative to parks and mean income level.
+Again I used the `ppm` function while adding covariates to the model formula:
+
+```{r,warning=F}
+mod_full = ppm(trees_ppp, ~park + income, 
+               covariates=list(park=park_raster, income=income_raster))
+mod_full
+```
+
+The estimated slope $\beta_1$ for the effect of park was `r round(mod_full$coef['park'],2)`, and for income $\beta_2$ it was `r round(mod_full$coef['income'],2)`.
+Both covariates had a statistically significant effect on rate, indicating that both contributed to the non-random distribution of trees in the city.
+
+```{r,echo=F}
+ef_sizes = round(exp(mod_full$coef),2)
+```
+
+To put things on a more understandable scale, the effect size of each covariate can be calculated as $\exp\left(\beta\right)$. 
+Thus, being inside a park increased the rate $\lambda$ by a factor of `r ef_sizes['park']`, or `r (ef_sizes['park'] - 1) * 100`%.
+At the same time, a 1-standard deviation increase in mean income (about $`r round(sd(income_data$estimate,na.rm=T))`) increased the rate by `r (ef_sizes['income'] - 1) * 100`%.
+
+These relationships can also be shown graphically:
+
+```{r}
+#Generare predicted values and SEs
+inc_vals = seq(min(income_data$estimate,na.rm=T),max(income_data$estimate,na.rm=T),10)
+sc_vals = (inc_vals - mean(income_data$estimate,na.rm=T))/sd(income_data$estimate,na.rm=T)
+
+X = rbind(cbind(1,1,sc_vals),cbind(1,0,sc_vals))
+loglam = X %*% mod_full$coef
+se = sqrt(diag(X %*% vcov(mod_full) %*% t(X)))
+figdata = data.frame(`Park Status` = rep(c('Inside','Outside'),each=length(inc_vals)),
+                     inc=inc_vals, lam=exp(loglam), upper=exp(loglam+1.96*se),
+                     lower=exp(loglam-1.96*se),check.names=F)
+
+#Plot predicted values and 95% confidence envelopes
+ggplot(data=figdata) +
+  geom_ribbon(aes(x=inc,ymin=lower,ymax=upper,group=`Park Status`), alpha=0.1) +
+  geom_line(aes(x=inc,y=lam, color=`Park Status`)) +
+  xlab('Mean income ($)') + ylab(expression(paste('Predicted rate (',lambda,')',sep='')))
+```
+
+### *Assess Model Fit*
+
+The final step is to see if the inhomogeneous point process model with covariates fits the dataset better than the intercept-only model, using analysis of deviance.
+
+```{r, message=F, warning=F}
+anova(mod_intercept, mod_full, test='Chi')
+```
+
+Based on the significant test result, the model with covariates is indeed a better fit.
+
+# Conclusion
+
+I found evidence to suppport all three of my hypotheses.
+First, the distribution of trees in Buffalo is non-random.
+Second, the density of trees is higher inside city parks than outside.
+Finally, the density of trees increases with mean income: richer neighborhoods have more trees, matching the findings of [at least one other U.S. study](http://journals.sagepub.com/doi/abs/10.1068/a41236).
