@@ -1,0 +1,153 @@
+---
+title: Distribution of Urban Trees in Buffalo (Part 3)
+date: 2018-09-06
+output:
+  html_document:
+    css: style.css
+    highlight: pygments
+---
+
+```{r,echo=FALSE}
+options(tidyverse.quiet=TRUE)
+suppressMessages(library(ggplot2))
+suppressMessages(library(sf))
+```
+
+In my [previous post on the Buffalo tree inventory](buffalo-trees-part2.html), I found that the density of trees was higher in city parks and increased with the mean income of the surrounding area. 
+
+One of my first steps in that analysis was to remove records of stumps and vacant tree spaces from the dataset, so as to focus on living trees.
+However, doing this brings up an interesting question: does the spatial distribution of stumps and vacant spaces follow the same patterns as with living trees?
+
+## Obtain the Datasets
+
+```{r,echo=F}
+#Cache the dataset if necessary
+if (file.exists('../data/trees_raw.Rdata')){
+  load('../data/trees_raw.Rdata')
+} else {
+  dir.create('../data')
+  trees_raw = read.socrata(csv_url) %>% as_tibble()
+  save(trees_raw,file='../data/trees_raw.Rdata')
+}
+```
+
+Below I provide an abbreviated description of downloading and cleaning the required datasets.
+See [part 2](buffalo-trees-part3.html) for a more detailed description.
+First, obtain the URL of the dataset:
+
+```{r}
+library(RSocrata)
+library(tidyverse)
+buf_datasets = ls.socrata('https://data.buffalony.gov')
+ind = which(buf_datasets$title == 'Tree Inventory')
+csv_url = buf_datasets$distribution[[ind]]$downloadURL[1]
+```
+
+```{r, eval=F}
+trees_raw = read.socrata(csv_url) %>% as_tibble()
+```
+
+Download the tree inventory data, filter out all living trees, and convert it to a simple features object with the correct projection:
+
+```{r}
+library(sf)
+nontrees_proj = trees_raw %>%
+  filter(Common.Name %in% c('STUMP', 'VACANT')) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"),
+          crs = "+proj=longlat +datum=WGS84") %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+  mutate(X = st_coordinates(.)[,1],
+         Y = st_coordinates(.)[,2]) %>%
+  select(X,Y,geometry)
+```
+
+Convert the simple features object to a `ppp` object for use with library `spatstat`:
+
+```{r,message=F,warning=F}
+library(spatstat)
+nontrees_ppp = ppp(x = nontrees_proj$X, y = nontrees_proj$Y, 
+              range(nontrees_proj$X), range(nontrees_proj$Y))
+plot(nontrees_ppp)
+```
+
+```{r, echo=F}
+get_shapefile <- function(url){
+  dest_dir = tempdir()
+  dest <- tempfile(tmpdir=dest_dir)
+  download.file(url, dest, quiet=T)
+  unzip(dest, exdir = dest_dir)
+  shape_name = grep('.shp',list.files(dest_dir),value=T)
+  setwd(dest_dir)
+  sf::st_read(shape_name,quiet=TRUE) 
+}
+
+sf_to_im = function(sf_object, background=0, field=NULL){
+  r = fasterize::raster(sf_object, res=5)
+  r = fasterize::fasterize(sf_object, r, background=background, field=field)
+  maptools::as.im.RasterLayer(r)
+}
+```
+
+Download the Buffalo city parks shapefile and convert it to the special raster form required by `spatstat` (see the previous post for the `get_shapefile()` and `sf_to_im()` functions):
+
+```{r}
+ind = which(buf_datasets$title == 'Parks')
+shape_url = buf_datasets$distribution[26][[1]]$downloadURL[3]
+park_raster = get_shapefile(shape_url) %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+  sf_to_im()
+```
+
+Do the same for the income data from ACS:
+
+```{r,warning=F,results='hide',message=F}
+library(tidycensus)
+income_data = get_acs(geography = 'tract', variables = c(income='B07011_001'),
+                   state='NY',county='Erie',geometry='TRUE') %>%
+  st_transform(crs="+proj=utm +zone=17 +datum=WGS84") %>%
+  st_crop(st_bbox(nontrees_proj)) %>%
+  mutate(estimateZ = scale(estimate)) %>%
+  st_cast() 
+income_raster = income_data %>%
+  sf_to_im(.,NA,"estimateZ")
+```
+
+## Conduct the Analysis
+
+Fit the same Poisson point process model as in part 2, with location relative to parks and mean income as covariates:
+
+```{r,message=F,warning=F}
+mod_full = ppm(nontrees_ppp, ~park + income, 
+               covariates=list(park=park_raster, income=income_raster))
+mod_full
+```
+
+As with the living trees dataset, both parks and income have a significant effect on the Poisson point process rate.
+However, in this case, the direction of the effect for both is opposite: stumps and vacant tree spaces are *less* frequent inside parks, and their density declines as mean area income increases!
+
+This can also be visualized graphically:
+
+```{r}
+#Generare predicted values and SEs
+inc_vals = seq(min(income_data$estimate,na.rm=T),max(income_data$estimate,na.rm=T),10)
+sc_vals = (inc_vals - mean(income_data$estimate,na.rm=T))/sd(income_data$estimate,na.rm=T)
+
+X = rbind(cbind(1,1,sc_vals),cbind(1,0,sc_vals))
+loglam = X %*% mod_full$coef
+se = sqrt(diag(X %*% vcov(mod_full) %*% t(X)))
+figdata = data.frame(`Park Status` = rep(c('Inside','Outside'),each=length(inc_vals)),
+                     inc=inc_vals, lam=exp(loglam), upper=exp(loglam+1.96*se),
+                     lower=exp(loglam-1.96*se),check.names=F)
+
+#Plot predicted values and 95% confidence envelopes
+ggplot(data=figdata) +
+  geom_ribbon(aes(x=inc,ymin=lower,ymax=upper,group=`Park Status`), alpha=0.1) +
+  geom_line(aes(x=inc,y=lam, color=`Park Status`)) +
+  xlab('Mean income ($)') + ylab(expression(paste('Predicted rate (',lambda,')',sep='')))
+```
+
+## Conclusion
+
+While living trees are associated with parks and higher-income areas, stumps and vacant tree spaces are more frequent outside parks and in lower-income areas.
+One possible explanation is that in lower-income areas, there is less motivation or fewer resources available to replace trees that die, resulting in an increasing disparity in living trees.
+It would be interesting to run a similar analysis on a historical tree inventory in Buffalo (if it exists), and see if some of these lower-income areas have seen a decline in living tree density over time.

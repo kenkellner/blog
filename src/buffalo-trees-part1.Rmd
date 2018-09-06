@@ -276,3 +276,5 @@ Next I plan to more formally examine variables that affect the spatial distribut
 
 I've identified several papers that looked at how economic and demographic variables impact urban trees (for example, [this one](http://journals.sagepub.com/doi/abs/10.1068/a41236) from Tampa, FL).
 As with my analysis of the Buffalo [recycling data](https://kenkellner.com/blog/buffalo-recycle-part2.html), the American Community Survey (ACS) should be a good source for these variables.
+
+View part 2 of the analysis [here](buffalo-trees-part2.html).

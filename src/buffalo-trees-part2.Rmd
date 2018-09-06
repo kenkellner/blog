@@ -200,7 +200,7 @@ Is the homogeneous PPP model appropriate for this dataset?
 Visually, it appears that trees are non-randomly distributed.
 
 I explicitly tested my first hypothesis (that the distribution is actually inhomogeneous) using a quadrat test.
-First, I divided area of interest is divided into a grid of 5x5 evenly-sized rectangles (*quadrats*), and the number of trees in each quadrat counted:
+First, I divided area of interest into a grid of 5x5 evenly-sized rectangles (*quadrats*), and counted the number of trees in each quadrat:
 
 ```{r}
 tree_quads = quadratcount(trees_ppp)
@@ -350,3 +350,5 @@ I found evidence to suppport all three of my hypotheses.
 First, the distribution of trees in Buffalo is non-random.
 Second, the density of trees is higher inside city parks than outside.
 Finally, the density of trees increases with mean income: richer neighborhoods have more trees, matching the findings of [at least one other U.S. study](http://journals.sagepub.com/doi/abs/10.1068/a41236).
+
+View part 3 of the analysis [here](buffalo-trees-part3.html).
