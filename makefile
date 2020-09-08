@@ -14,7 +14,7 @@ all: $(RMD_OUT)
 
 deploy:
 	@rsync -r --progress --delete --update build/ \
-		kllnr.net:/var/www/kenkellner.com/blog/
+		squirrel:/var/www/kenkellner.com/blog/
 
 $(BUILD)/%.html: $(SRC)/%.Rmd $(SRC)/_navbar.yml $(SRC)/style.css 
 	Rscript build_Rmd.R $< $@
