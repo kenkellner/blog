@@ -1,7 +1,6 @@
 ---
 title: 'Overview of ubms'
 subtitle: 'Unmarked Bayesian Models with Stan'
-author: Ken Kellner
 date: 2020-09-07
 output:
     html_document:
